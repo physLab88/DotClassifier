@@ -6,11 +6,13 @@ from torchvision import transforms
 import numpy as np
 import matplotlib.pyplot as plt
 
+from torchvision import models
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
 
 # ======================== TRAINING SETTINGS ========================
-BATCH_SIZE = 64
+BATCH_SIZE = 16
 LEARNING_RATE = 1E-2
 EPOCHS = 10
 
@@ -50,34 +52,14 @@ def lookAtData(n):
 
 
 # ====================== BUILDING THE NET ======================
-class NeuralNetwork(nn.Module):
-    def __init__(self):
-        super(NeuralNetwork, self).__init__()
-        self.stack1 = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=8, kernel_size=5, padding=2),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=8, out_channels=16, kernel_size=5, padding=2),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=16, out_channels=8, kernel_size=16, padding=0, stride=2),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=8, out_channels=32, kernel_size=16, padding=0, stride=3),
-            nn.ReLU(),
-            nn.Flatten(),
-            nn.Linear(32*30*30, 8*1024),
-            nn.ReLU(),
-            nn.Linear(8 * 1024, 512),
-            nn.ReLU(),
-            nn.Linear(512, 102),
-            nn.Softmax(dim=1)
-        )
-
-    def forward(self, x):
-        out = self.stack1(x)
-        return out
-
-
-model = NeuralNetwork().to(device)
-
+resnet50 = models.resnet50(weights=True)
+# print(resnet50._modules.keys())
+# print(resnet50._modules['fc'])
+last_layer = 'fc'
+temp_in = resnet50._modules[last_layer].in_features
+temp_out = 102
+resnet50._modules[last_layer] = nn.Linear(temp_in, temp_out)
+resnet50 = resnet50.to(device)
 
 # ==================== TRAINING AND TESTING ====================
 def test_loop(dataloader, model, loss_fn):
@@ -124,8 +106,8 @@ def train_loop(dataloader, model, loss_fn, optimizer):
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
 
-loss_fn = nn.CrossEntropyLoss()
-optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)
+loss_fn = nn.CrossEntropyLoss()  # KLDivLoss()
+optimizer = torch.optim.SGD(resnet50.parameters(), lr=LEARNING_RATE)
 
 
 # ============================ MAIN ============================
@@ -133,15 +115,16 @@ def main():
     success = []
     for t in range(EPOCHS):
         print(f"Epoch {t + 1}\n-------------------------------")
-        train_loop(img_dataloaders['test'], model, loss_fn, optimizer)
-        success.append(test_loop(img_dataloaders['train'], model, loss_fn))
+        train_loop(img_dataloaders['test'], resnet50, loss_fn, optimizer)
+        success.append(test_loop(img_dataloaders['train'], resnet50, loss_fn))
     print("Done!")
     plt.plot(np.arange(len(success)) + 1, np.array(success), 'ko')
+    plt.title('Flower ResNet50 KLDivLoss')
     plt.xlabel('epoche')
     plt.ylabel('success')
     plt.show()
 
-    torch.save(model, 'flower_model.pt')
+    torch.save(resnet50, 'resnet_flower.pt')
 
 
 if __name__ == '__main__':
