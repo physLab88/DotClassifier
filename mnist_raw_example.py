@@ -6,6 +6,9 @@ from torchvision.transforms import ToTensor, Lambda
 import numpy as np
 import matplotlib.pyplot as plt
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Using {device} device")
+#device='cpu'
 
 learning_rate = 7e-3
 batch_size = 64
@@ -49,12 +52,14 @@ class NeuralNetwork(nn.Module):
         return logits
 
 
-model = NeuralNetwork()
+model = NeuralNetwork().to(device)
 
 
 def train_loop(dataloader, model, loss_fn, optimizer):
     size = len(dataloader.dataset)
     for batch, (X, y) in enumerate(dataloader):
+        X = X.to(device)
+        y = y.to(device)
         # Compute prediction and loss
         pred = model(X)
         loss = loss_fn(pred, y)
@@ -76,6 +81,8 @@ def test_loop(dataloader, model, loss_fn):
 
     with torch.no_grad():
         for X, y in dataloader:
+            X = X.to(device)
+            y = y.to(device)
             pred = model(X)
             test_loss += loss_fn(pred, y).item()
             correct += (pred.argmax(1) == y).type(torch.float).sum().item()
