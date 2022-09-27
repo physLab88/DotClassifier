@@ -115,6 +115,7 @@ plt.ylabel('success')
 plt.show()
 
 # ========================== STORING THE MODEL =============================
-torch.save(model, 'cloth_model_1.pt')
+model_scripted = torch.jit.script(model) # Export to TorchScript
+model_scripted.save('Networks/cloth_model/cloth_model.pt')  # Save
 
 
