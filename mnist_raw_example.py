@@ -1,3 +1,8 @@
+# ============ wandb ============
+import wandb
+
+wandb.init(project="test-project", entity="3it_dot_classifier")
+# =========== imports ===========
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -12,8 +17,12 @@ print(f"Using {device} device")
 
 learning_rate = 7e-3
 batch_size = 64
-epochs = 3
-
+epochs = 16
+wandb.config = {
+  "learning_rate": learning_rate,
+  "epochs": batch_size,
+  "batch_size": epochs
+}
 
 training_data = datasets.FashionMNIST(
     root="data",
@@ -89,6 +98,11 @@ def test_loop(dataloader, model, loss_fn):
 
     test_loss /= num_batches
     correct /= size
+    wandb.log({"loss": test_loss})
+    wandb.log({"accuracy": correct})
+
+    # Optional
+    wandb.watch(model)
     print(f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
     return(100*correct)
 
