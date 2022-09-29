@@ -1,7 +1,7 @@
 # ============ wandb ============
 import wandb
 
-wandb.init(project="test-project", entity="3it_dot_classifier")
+
 # =========== imports ===========
 import torch
 from torch import nn
@@ -17,13 +17,19 @@ print(f"Using {device} device")
 
 learning_rate = 7e-3
 batch_size = 64
-epochs = 16
-wandb.config = {
-  "learning_rate": learning_rate,
-  "epochs": batch_size,
-  "batch_size": epochs
-}
+epochs = 64
 
+id = wandb.util.generate_id()
+# id =
+configs = {
+  "learning_rate": learning_rate,
+  "epochs": epochs,
+  "batch_size": batch_size,
+  "id": id,
+}
+run = wandb.init(project="test-project", entity="3it_dot_classifier", id=id, resume="allow", config=configs)  # notes, tags, group
+print(run.name)
+# =============================== LOADING DATA ================================
 training_data = datasets.FashionMNIST(
     root="data",
     train=True,
@@ -117,16 +123,12 @@ def prob_sum_loss(my_outputs, my_labels):  # my test loss function
 loss_fn = nn.CrossEntropyLoss()
 optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 
-success = []
+
 for t in range(epochs):
     print(f"Epoch {t+1}\n-------------------------------")
     train_loop(train_dataloader, model, loss_fn, optimizer)
-    success.append(test_loop(test_dataloader, model, loss_fn))
+    test_loop(test_dataloader, model, loss_fn)
 print("Done!")
-plt.plot(np.arange(len(success)) + 1, np.array(success), 'ko')
-plt.xlabel('epoche')
-plt.ylabel('success')
-plt.show()
 
 # ========================== STORING THE MODEL =============================
 model_scripted = torch.jit.script(model) # Export to TorchScript

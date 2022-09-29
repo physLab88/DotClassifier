@@ -7,14 +7,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from torchvision import models
+from datetime import datetime
+import cronos as cron
+import wandb
 
+# ===================== GLOBAL VARIABLES =====================
+RUN_NAME = ''
+ID = ''
+NETWORK_DIRECTORY = "Networks/Flower102/"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
-
-# ======================== TRAINING SETTINGS ========================
-BATCH_SIZE = 16
-LEARNING_RATE = 1E-2
-EPOCHS = 10
 
 # ======================= SETTING UP DATASET ========================
 data_transforms = {'train': transforms.Compose([transforms.RandomResizedCrop(224),
@@ -39,8 +41,6 @@ img_datasets = {
     'test': datasets.Flowers102(root="data", split="test", download=True, transform=data_transforms['test']),
     'valid': datasets.Flowers102(root="data", split="val", download=True, transform=data_transforms['valid'])}
 
-img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True) for key in img_datasets}
-
 
 def lookAtData(n):
     for i in range(n):
@@ -50,19 +50,9 @@ def lookAtData(n):
         plt.title(labels[1])
         plt.show()
 
-
-# ====================== BUILDING THE NET ======================
-resnet50 = models.resnet50(weights=True)
-# print(resnet50._modules.keys())
-# print(resnet50._modules['fc'])
-last_layer = 'fc'
-temp_in = resnet50._modules[last_layer].in_features
-temp_out = 102
-resnet50._modules[last_layer] = nn.Linear(temp_in, temp_out)
-resnet50 = resnet50.to(device)
-
 # ==================== TRAINING AND TESTING ====================
 def test_loop(dataloader, model, loss_fn):
+    print("=========== Evaluating model ===========")
     size = len(dataloader.dataset)
     num_batches = len(dataloader)
     test_loss, correct = 0, 0
@@ -80,13 +70,14 @@ def test_loop(dataloader, model, loss_fn):
 
     test_loss /= num_batches
     correct /= size
-    print(f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
-    return(100*correct)
+    print(f"Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
+    return correct, test_loss
 
 
 def train_loop(dataloader, model, loss_fn, optimizer):
     size = len(dataloader.dataset)
     i=0
+    cron.start('train_print')
     for batch, (X, y) in enumerate(dataloader):
         X = X.to(device)
         y = y.to(device)
@@ -99,32 +90,78 @@ def train_loop(dataloader, model, loss_fn, optimizer):
         loss.backward()
         optimizer.step()
         i += 1
-        #print('t %s' % i)
 
-        if batch % 12 == 0:
+        if cron.t('train_print') >= 5.0:
+            cron.start('train_print')
             loss, current = loss.item(), batch * len(X)
-            print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
+            temp = current/size
+            bar = '[' + int(temp*30)*'#' + int((1-temp)*30)*'-' + ']'
+            print("loss: {loss:.5f}  {bar:>} {perc:.2%}".format(loss=loss, bar=bar, perc=temp))
+    cron.stop('train_print')
 
 
-loss_fn = nn.CrossEntropyLoss()  # KLDivLoss()
-optimizer = torch.optim.SGD(resnet50.parameters(), lr=LEARNING_RATE)
+def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_dataloader, numEpoch, filename=None):
+    # TODO initial assestement
+    # TODO continue run ???
+    # ------------->>> training loop
+    for E in range(numEpoch):
+        print("Starting Epoch %s \n ========================================" % (E+1))
+        train_loop(train_dataloader, model, loss_fn, optimizer)
+        accu, loss = test_loop(test_dataloader, model, loss_fn)
+
+        wandb.log({"loss": loss, "accuracy": accu, "epoch": E + 1})
+        wandb.config.update({"epochs": E + 1}, allow_val_change=True)
+        # ------------>>> make a checkpoint
+        # ---> save report
+        # ---> save optim
+        # ---> save model
+        model_scripted = torch.jit.script(model)  # Export to TorchScript
+        model_scripted.save(NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')  # Save
+    # ------------>>> final save
+    # ---> save report
+    # ---> save model
+    model_scripted = torch.jit.script(model)  # Export to TorchScript
+    model_scripted.save(NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')  # Save
+
+
+# ====================== BUILDING THE NET ======================
+model = models.resnet50(weights=True)
+# print(model._modules.keys())
+# print(model._modules['fc'])
+last_layer = 'fc'
+temp_in = model._modules[last_layer].in_features
+temp_out = 102
+model._modules[last_layer] = nn.Linear(temp_in, temp_out)
+model = model.to(device)
 
 
 # ============================ MAIN ============================
 def main():
-    success = []
-    for t in range(EPOCHS):
-        print(f"Epoch {t + 1}\n-------------------------------")
-        train_loop(img_dataloaders['test'], resnet50, loss_fn, optimizer)
-        success.append(test_loop(img_dataloaders['train'], resnet50, loss_fn))
-    print("Done!")
-    plt.plot(np.arange(len(success)) + 1, np.array(success), 'ko')
-    plt.title('Flower ResNet50 KLDivLoss')
-    plt.xlabel('epoche')
-    plt.ylabel('success')
-    plt.show()
+    global ID, RUN_NAME
+    ID = wandb.util.generate_id()
+    # ID =
+    configs = {
+        "learning_rate": 7E-2,
+        "epochs": 10,
+        "batch_size": 16,
+        "architecture": "ResNet50",
+        "pretrained": True,
+        "loss_fn": "CrossEntropyLoss",
+        "optimiser": "SGD",
+    }
+    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=configs['batch_size'], shuffle=True)
+                       for key in img_datasets}
 
-    torch.save(resnet50, 'resnet_flower.pt')
+    # ----------------->>> loss and optimisers
+    loss_fn = nn.CrossEntropyLoss()  # KLDivLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=configs['learning_rate'])
+
+    # ----------------->>> starting the run
+    run = wandb.init(project="Flower102", entity="3it_dot_classifier", id=ID, resume="allow",
+                     config=configs, tags=['resnet50Pretrained'])  # notes, tags, group  are other usfull parameters
+    RUN_NAME = run.name
+    basicTrainingSequence(model, loss_fn, optimizer, img_dataloaders['test'],
+                          img_dataloaders['train'], configs['epochs'])
 
 
 if __name__ == '__main__':
