@@ -43,6 +43,7 @@ img_datasets = {
 
 
 def lookAtData(n):
+    # broken function
     for i in range(n):
         images, labels = next(iter(img_dataloaders["train"]))
         print(images.shape)
@@ -125,7 +126,7 @@ def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_data
 
 
 # ====================== BUILDING THE NET ======================
-model = models.resnet50(weights=True)
+model = models.resnet50(weights=False)
 # print(model._modules.keys())
 # print(model._modules['fc'])
 last_layer = 'fc'
@@ -137,6 +138,8 @@ model = model.to(device)
 
 # ============================ MAIN ============================
 def main():
+    # TODO load models
+    # TODO randomise weights
     global ID, RUN_NAME
     ID = wandb.util.generate_id()
     # ID =
@@ -145,7 +148,7 @@ def main():
         "epochs": 10,
         "batch_size": 16,
         "architecture": "ResNet50",
-        "pretrained": True,
+        "pretrained": False,
         "loss_fn": "CrossEntropyLoss",
         "optimiser": "SGD",
     }
@@ -158,7 +161,7 @@ def main():
 
     # ----------------->>> starting the run
     run = wandb.init(project="Flower102", entity="3it_dot_classifier", id=ID, resume="allow",
-                     config=configs, tags=['resnet50Pretrained'])  # notes, tags, group  are other usfull parameters
+                     config=configs, tags=['resnet50'])  # notes, tags, group  are other usfull parameters
     RUN_NAME = run.name
     basicTrainingSequence(model, loss_fn, optimizer, img_dataloaders['test'],
                           img_dataloaders['train'], configs['epochs'])
