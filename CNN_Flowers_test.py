@@ -7,14 +7,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from torchvision import models
-from datetime import datetime
 import cronos as cron
 import wandb
+import os
 
 # ===================== GLOBAL VARIABLES =====================
 RUN_NAME = ''
-ID = ''
+ID = wandb.util.generate_id()
 NETWORK_DIRECTORY = "Networks/Flower102/"
+PROJECT = 'Flower102'
+ENTITY = "3it_dot_classifier"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
 
@@ -50,6 +52,7 @@ def lookAtData(n):
         plt.imshow(images[np.random.randint(0, BATCH_SIZE),np.random.randint(0, 3)])
         plt.title(labels[1])
         plt.show()
+
 
 # ==================== TRAINING AND TESTING ====================
 def test_loop(dataloader, model, loss_fn):
@@ -101,17 +104,17 @@ def train_loop(dataloader, model, loss_fn, optimizer):
     cron.stop('train_print')
 
 
-def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_dataloader, numEpoch, filename=None):
+def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_dataloader, numEpoch, init_epoch=1):
     # TODO initial assestement
-    # TODO continue run ???
+    # TODO continue run / checkpoint ???
     # ------------->>> training loop
     for E in range(numEpoch):
         print("Starting Epoch %s \n ========================================" % (E+1))
         train_loop(train_dataloader, model, loss_fn, optimizer)
         accu, loss = test_loop(test_dataloader, model, loss_fn)
 
-        wandb.log({"loss": loss, "accuracy": accu, "epoch": E + 1})
-        wandb.config.update({"epochs": E + 1}, allow_val_change=True)
+        wandb.log({"loss": loss, "accuracy": accu, "epoch": E + init_epoch})
+        wandb.config.update({"epochs": E + init_epoch}, allow_val_change=True)
         # ------------>>> make a checkpoint
         # ---> save report
         # ---> save optim
@@ -125,46 +128,99 @@ def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_data
     model_scripted.save(NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')  # Save
 
 
-# ====================== BUILDING THE NET ======================
-model = models.resnet50(weights=False)
-# print(model._modules.keys())
-# print(model._modules['fc'])
-last_layer = 'fc'
-temp_in = model._modules[last_layer].in_features
-temp_out = 102
-model._modules[last_layer] = nn.Linear(temp_in, temp_out)
-model = model.to(device)
+def load_model(model_name, configs, branch_training=False, tags=None):
+    ''' This function allows to load previous neural nets
+    filepath: the name of the model (this model must be in the
+              NETWORK_DIRECTORY directory)
+    branch_training: if false, training or testing will resume on
+                     that network. if trained, the new network will be
+                     saved on top of this network. if True, will branch
+                     out the network and create a new ID for the network'''
+    # TODO checkpoint resume
+    global ID
+
+    # ---------------->>> Loading the model
+    model_file_id = None
+    for filename in os.listdir(NETWORK_DIRECTORY):
+        f = os.path.join(NETWORK_DIRECTORY, filename)
+        # checking if it is a file
+        if os.path.isfile(f):
+            if filename.find(model_name) != -1:
+                model_file_id = filename[0:filename.find('.')]
+                break
+    if model_file_id is None:
+        raise 'model_name= %s not found in %s directory' % (model_name, NETWORK_DIRECTORY)
+    model = torch.jit.load(NETWORK_DIRECTORY + model_file_id + '.pt')
+    model.train()
+    model = model.to(device)
+
+    api = wandb.Api()
+    run_id = model_file_id[model_file_id.find('_') + 1:]
+    temp_run = api.run("{entity}/{project}/{run_id}".format(entity=ENTITY, project=PROJECT, run_id=run_id))
+    prev_config = temp_run.config
+    summary = temp_run.summary
+
+    configs['architecture'] = prev_config['architecture']
+    configs['pretrained'] = prev_config['pretrained']
+    init_epoch = summary['epoch']
+    if not branch_training:
+        ID = model_file_id[model_file_id.find('_') + 1:]
+        print('ID %s' % ID)
+        configs['parent_run'] = model_name
+
+    run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
+                     config=configs, tags=tags)  # notes, tags, group  are other usfull parameters
+
+    if branch_training:
+        wandb.log({"loss": summary['loss'], "accuracy": summary['accuracy'], "epoch": init_epoch})
+    return run, model, init_epoch + 1
 
 
 # ============================ MAIN ============================
 def main():
-    # TODO load models
+    # TODO delete epochs config
     # TODO randomise weights
     global ID, RUN_NAME
-    ID = wandb.util.generate_id()
-    # ID =
     configs = {
-        "learning_rate": 7E-2,
-        "epochs": 10,
+        "learning_rate": 1E-3,
+        "epochs": 3,
         "batch_size": 16,
-        "architecture": "ResNet50",
-        "pretrained": False,
+        "architecture": "ResNet50",     # modified when loaded
+        "pretrained": False,            # modified when loaded
         "loss_fn": "CrossEntropyLoss",
-        "optimiser": "SGD",
+        "optimiser": "Adam",
     }
+    tags = ['resnet50']
     img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=configs['batch_size'], shuffle=True)
                        for key in img_datasets}
 
+    # ======================= BUILDING MODEL AND WANDB =======================
+    model_name = 'lucky-disco'
+    branch_training = True
+    if model_name is None:
+        model = models.resnet50(weights=False)
+        # print(model._modules.keys())
+        # print(model._modules['fc'])
+        last_layer = 'fc'
+        temp_in = model._modules[last_layer].in_features
+        temp_out = 102
+        model._modules[last_layer] = nn.Linear(temp_in, temp_out)
+        model = model.to(device)
+
+        run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
+                         config=configs, tags=tags)  # notes, tags, group  are other usfull parameters
+        init_epoch = 1
+    else:
+        run, model, init_epoch = load_model(model_name, configs,  branch_training=branch_training, tags=tags)
+
     # ----------------->>> loss and optimisers
     loss_fn = nn.CrossEntropyLoss()  # KLDivLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=configs['learning_rate'])
+    optimizer = torch.optim.Adam(model.parameters(), lr=configs['learning_rate'])
 
-    # ----------------->>> starting the run
-    run = wandb.init(project="Flower102", entity="3it_dot_classifier", id=ID, resume="allow",
-                     config=configs, tags=['resnet50'])  # notes, tags, group  are other usfull parameters
+    # ----------------->>> training the network
     RUN_NAME = run.name
     basicTrainingSequence(model, loss_fn, optimizer, img_dataloaders['test'],
-                          img_dataloaders['train'], configs['epochs'])
+                          img_dataloaders['train'], configs['epochs'], init_epoch=init_epoch)
 
 
 if __name__ == '__main__':
