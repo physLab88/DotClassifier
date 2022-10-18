@@ -1,12 +1,13 @@
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets
 from torchvision import transforms
 import numpy as np
 import matplotlib.pyplot as plt
 
 from torchvision import models
+import yaml
 import cronos as cron
 import wandb
 import os
@@ -14,44 +15,85 @@ import os
 # ===================== GLOBAL VARIABLES =====================
 RUN_NAME = ''
 ID = wandb.util.generate_id()
-NETWORK_DIRECTORY = "Networks/Flower102/"
-PROJECT = 'Flower102'
+NETWORK_DIRECTORY = "Networks/POC_dotClassifier/"
+PROJECT = 'POC_dotClassifier'
 ENTITY = "3it_dot_classifier"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
+DIRECTORY = "data/sim_data/"
+LABELtoTYPE = ('P', 'As', 'B')
+BATCH_SIZE = 32
+
 
 # ======================= SETTING UP DATASET ========================
-data_transforms = {'train': transforms.Compose([transforms.RandomResizedCrop(224),
-                                    transforms.RandomHorizontalFlip(),transforms.RandomRotation(30),
-                                    transforms.ToTensor(),
-                                    transforms.Normalize([0.485, 0.456, 0.406],
-                                                         [0.229, 0.224, 0.225])]),
-                   'valid': transforms.Compose([transforms.Resize(256),
-                                      transforms.CenterCrop(224),
-                                      transforms.ToTensor(),
-                                      transforms.Normalize([0.485, 0.456, 0.406],
-                                                           [0.229, 0.224, 0.225])]),
-                   'test': transforms.Compose([transforms.Resize(256),
-                                      transforms.CenterCrop(224),
-                                      transforms.ToTensor(),
-                                      transforms.Normalize([0.485, 0.456, 0.406],
-                                                           [0.229, 0.224, 0.225])])
+# ---------------->>> DATALOADER
+class StabilityDataset(Dataset):
+    """ Class that allows to retreive the training and validation data"""
+    def __init__(self, root_dir, transform=None, target_transform=None):
+        """
+        root_dir (string): Directory with all the images.
+        transform (callable, optional): Optional transform to be applied
+                on a sample.
+        """
+        f = open(root_dir + '_data_indexer.yaml', 'r')
+        self.info = yaml.load(f, Loader=yaml.FullLoader)
+        self.root_dir = root_dir
+        self.transform = transform
+        self.target_transform = target_transform
+        return
+
+    def __len__(self):
+        return len(self.info)
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        sample_name = self.root_dir + self.info[idx]['f'] + '.npy'
+        sample = np.load(sample_name)
+
+        label = self.info[idx]['label']
+        if self.transform:
+            sample = self.transform(sample)
+        if self.target_transform:
+            label = self.target_transform(label)
+        return sample, label
+
+
+data_transforms = {'train': transforms.Compose([transforms.ToTensor(),
+    transforms.RandomAffine(degrees=0, translate=(0.1, 0.025)),
+    ]),
+                   'valid': transforms.Compose([transforms.ToTensor(),
+    transforms.RandomAffine(degrees=0, translate=(0.1, 0.025)),
+    ]),
 }
+# transforms.GaussianBlur(kernel_size[, sigma])
+data_target_transforms = {'train': None,
+                          'valid': None,
+                          }
 
 img_datasets = {
-    'train': datasets.Flowers102(root="data", split="train", download=True, transform=data_transforms['train']),
-    'test': datasets.Flowers102(root="data", split="test", download=True, transform=data_transforms['test']),
-    'valid': datasets.Flowers102(root="data", split="val", download=True, transform=data_transforms['valid'])}
+    key: StabilityDataset(root_dir=DIRECTORY, transform=data_transforms[key],
+                          target_transform=data_target_transforms[key]) for key in data_transforms}
 
 
-def lookAtData(n):
-    # broken function
-    for i in range(n):
-        images, labels = next(iter(img_dataloaders["train"]))
-        print(images.shape)
-        plt.imshow(images[np.random.randint(0, BATCH_SIZE),np.random.randint(0, 3)])
-        plt.title(labels[1])
-        plt.show()
+def lookAtData(dataloader, info, nrows=1, ncols=1):
+    fig, axs = plt.subplots(nrows, ncols, sharex=True, sharey=True)
+    info = info[0]
+    Vg = info['Vg_range']
+    Vds = info['Vds_range']
+    for i in range(nrows):
+        axs[i, 0].set_ylabel(r'$V_{ds}$ in mV')
+        for j in range(ncols):
+            plt.sca(axs[i, j])
+            diagrams, labels = next(iter(dataloader))
+            index = np.random.randint(0, BATCH_SIZE)
+            plt.title(LABELtoTYPE[labels[index]])
+            plt.imshow(np.abs(diagrams[index, 0]), extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]], aspect=1, cmap='hot')
+    for j in range(ncols):
+        axs[-1, j].set_xlabel(r'$V_g$ in mV')
+    #plt.tight_layout()
+    plt.show()
 
 
 # ==================== TRAINING AND TESTING ====================
@@ -176,12 +218,16 @@ def load_model(model_name, configs, branch_training=False, tags=None):
     return run, model, init_epoch + 1
 
 
+# =================== CREATING A CUSTOM MODEL ==================
+
 # ============================ MAIN ============================
 def main():
     # TODO delete epochs config
     # TODO randomise weights
     # TODO implement parent run everywhere
-    global ID, RUN_NAME
+
+    global ID, RUN_NAME, BATCH_SIZE
+    BATCH_SIZE = 32
     configs = {
         "learning_rate": 1E-3,
         "epochs": 150,
@@ -192,8 +238,10 @@ def main():
         "optimiser": "Adam",
     }
     tags = ['resnet50']
-    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=configs['batch_size'], shuffle=True)
+    print('Dataset train size = %s' % len(img_datasets['train']))
+    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
                        for key in img_datasets}
+    lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
 
     # ======================= BUILDING MODEL AND WANDB =======================
     model_name = None

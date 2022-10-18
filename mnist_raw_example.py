@@ -17,7 +17,7 @@ print(f"Using {device} device")
 
 learning_rate = 7e-3
 batch_size = 64
-epochs = 64
+epochs = 3
 
 id = wandb.util.generate_id()
 # id =
