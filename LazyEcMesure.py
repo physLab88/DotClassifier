@@ -186,18 +186,19 @@ def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_data
     model_scripted.save(NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')  # Save
 
 
-def load_model(model_name, configs=None, branch_training=False, tags=None):
+def load_model(model_name, configs=None, branch_training=True, tags=None, train=True):
     ''' This function allows to load previous neural nets
     filepath: the name of the model (this model must be in the
               NETWORK_DIRECTORY directory)
     configs: the current training run configurations. some of these
              configs will be automatically updated to match the previous runs.
              if no configs are given, the model will automatically be loaded
-             in eval mode, and only the model will be returned
+             with all the previous configs
     branch_training: if false, training or testing will resume on
                      that network. if trained, the new network will be
                      saved on top of this network. if True, will branch
-                     out the network and create a new ID for the network'''
+                     out the network and create a new ID for the network
+    train: wether or not load the model in train mode or eval mode'''
     # TODO checkpoint resume
     global ID
 
@@ -213,14 +214,11 @@ def load_model(model_name, configs=None, branch_training=False, tags=None):
     if model_file_id is None:
         raise 'model_name= %s not found in %s directory' % (model_name, NETWORK_DIRECTORY)
     model = torch.jit.load(NETWORK_DIRECTORY + model_file_id + '.pt')
-    if configs is None:
-        model.eval()
-        model = model.to(device)
-        return model
-    else:
+    if train:
         model.train()
-        model = model.to(device)
-
+    else:
+        model.eval()
+    model = model.to(device)
 
     api = wandb.Api()
     run_id = model_file_id[model_file_id.find('_') + 1:]
@@ -228,8 +226,11 @@ def load_model(model_name, configs=None, branch_training=False, tags=None):
     prev_config = temp_run.config
     summary = temp_run.summary
 
-    configs['architecture'] = prev_config['architecture']
-    configs['pretrained'] = prev_config['pretrained']
+    if configs is None:
+        configs = prev_config
+    else:
+        configs['architecture'] = prev_config['architecture']
+        configs['pretrained'] = prev_config['pretrained']
     init_epoch = summary['epoch']
     if not branch_training:
         ID = model_file_id[model_file_id.find('_') + 1:]
@@ -241,7 +242,7 @@ def load_model(model_name, configs=None, branch_training=False, tags=None):
 
     if branch_training:
         wandb.log({"loss": summary['loss'], "accuracy": summary['accuracy'], "epoch": init_epoch})
-    return run, model, init_epoch + 1
+    return run, model, init_epoch + 1, configs
 
 
 # =================== CREATING A CUSTOM MODEL ==================
@@ -283,17 +284,19 @@ class EndBlock(nn.Module):
 
 
 # ======================== MAIN ROUTINES ========================
-def analise_network(model_name, datatype='train'):
+def analise_network(model_name, datatype='valid'):
     img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=1, shuffle=True)
                        for key in img_datasets}
     dataloader = img_dataloaders[datatype]
     infos = img_datasets[datatype].info
     # lookAtData(dataloader, dataloader.info, 5, 5)
     loss_fn = nn.MSELoss()
-    model = load_model(model_name)
+    run, model, epoch, configs = load_model(model_name, branch_training=False)
+
 
     print("=========== Analising model fit ===========")
     loss = []
+    error = []
     alpha = []
     Ec = []
     n_levels = []
@@ -304,6 +307,7 @@ def analise_network(model_name, datatype='train'):
             X = X.to(device)
             y = y.to(device)
             pred = model(X)
+            error.append(abs(float(pred - info['Ec'])))
             loss.append(loss_fn(pred, y).item())
             alpha.append(info['Cg']/(info['Cg'] + info['Cs'] + info['Cd']))
             Ec.append(info['Ec'])
@@ -315,25 +319,39 @@ def analise_network(model_name, datatype='train'):
                 plt.imshow(np.abs(X), aspect=1, cmap='hot')
                 plt.show()
     loss = np.array(loss)
+    error = np.array(error)
     alpha = np.array(alpha)
     Ec = np.array(Ec)
     n_levels = np.array(n_levels)
 
-    plt.title('alpha')
-    plt.plot(loss, alpha, 'ok', ms=1)
-    plt.show()
+    figAlpha, ax = plt.subplots()
+    plt.title('epoch = %s' % epoch)
+    plt.plot(error, alpha, 'ok', ms=1)
+    plt.xlabel("Ec error in meV")
+    plt.ylabel("alpha")
 
-    plt.title('Ec')
-    plt.plot(loss, Ec, 'ok', ms=1)
-    plt.show()
+    figEc, ax = plt.subplots()
+    plt.title('epoch = %s' % epoch)
+    plt.plot(error, Ec, 'ok', ms=1)
+    plt.xlabel("Ec error in meV")
+    plt.ylabel("Ec (meV)")
 
-    plt.title('n_levels')
-    plt.plot(loss, n_levels, 'ok', ms=1)
-    plt.show()
+    figLv, ax = plt.subplots()
+    plt.title('epoch = %s' % epoch)
+    plt.plot(error, n_levels, 'ok', ms=1)
+    plt.xlabel("Ec error in meV")
+    plt.ylabel("number of energy levels")
 
-    plt.title('T')
-    plt.plot(loss, T, 'ok', ms=1)
-    plt.show()
+    figT, ax = plt.subplots()
+    plt.title('epoch = %s' % epoch)
+    plt.plot(error, T, 'ok', ms=1)
+    plt.xlabel("Ec error in meV")
+    plt.ylabel("Temperature (K)")
+
+    wandb.log({"alpha fig": figAlpha,
+               "Ec fig": figEc,
+               "n level fig": figLv,
+               "T fig": figT,})
     return loss, alpha
 
 
@@ -346,9 +364,9 @@ def train():
     BATCH_SIZE = 32
     configs = {
         "learning_rate": 1E-3,
-        "epochs": 40,
+        "epochs": 1,
         "batch_size": BATCH_SIZE,
-        "architecture": "ResNet50_bigFinal2",  # modified when loaded
+        "architecture": "ResNet50",  # modified when loaded
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
         "optimiser": "SGD",
@@ -361,8 +379,8 @@ def train():
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
 
     # ======================= BUILDING MODEL AND WANDB =======================
-    model_name = None
-    branch_training = True
+    model_name = "strange-hex"
+    branch_training = True  # always True unless continuing a checkpoint
     if model_name is None:
         model = models.resnet50(weights=True)
         # print(model._modules.keys())
@@ -370,15 +388,15 @@ def train():
         last_layer = 'fc'
         temp_in = model._modules[last_layer].in_features
         temp_out = 1
-        model._modules[last_layer] = EndBlock(temp_in, temp_out)
-        # model._modules[last_layer] = nn.Linear(temp_in, temp_out)
+        # model._modules[last_layer] = EndBlock(temp_in, temp_out)
+        model._modules[last_layer] = nn.Linear(temp_in, temp_out)
         model = model.to(device)
 
         run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
                          config=configs, tags=tags)  # notes, tags, group are other usfull parameters
         init_epoch = 1
     else:
-        run, model, init_epoch = load_model(model_name, configs, branch_training=branch_training, tags=tags)
+        run, model, init_epoch, configs = load_model(model_name, configs, branch_training=branch_training, tags=tags)
 
     # ----------------->>> loss and optimisers
     loss_fn = nn.MSELoss()
@@ -393,8 +411,8 @@ def train():
 # ============================ MAIN ============================
 def main():
     # TODO: implement a save for the best networks
-    train()
-    # analise_network("devout-snow", 'train')
+    # train()
+    analise_network("hardy-shape", 'valid')
 
 
 if __name__ == '__main__':

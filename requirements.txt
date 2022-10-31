@@ -5,3 +5,4 @@ torch  # but download itthrugh the pip3 comand on pytorch page for CUDA
 pyyalm  # I had to download it through pip
 torchvision
 pandas
+plotly

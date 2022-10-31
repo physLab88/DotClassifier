@@ -115,6 +115,12 @@ def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_data
         accu, loss = test_loop(test_dataloader, model, loss_fn)
 
         wandb.log({"loss": loss, "accuracy": accu, "epoch": E + init_epoch})
+        if True:
+            fig1, ax = plt.subplots()
+            plt.plot(np.arange(5), np.arange(5)*E)
+            # fig2, ax = plt.subplots()
+            # plt.plot(np.arange(5), np.arange(5))
+            wandb.log({"epoch": E + init_epoch, "fig1": fig1})
         wandb.config.update({"epochs": E + init_epoch}, allow_val_change=True)
         # ------------>>> make a checkpoint
         # ---> save report
@@ -185,7 +191,7 @@ def main():
     global ID, RUN_NAME
     configs = {
         "learning_rate": 1E-3,
-        "epochs": 1,
+        "epochs": 5,
         "batch_size": 16,
         "architecture": "ResNet50",     # modified when loaded
         "pretrained": False,            # modified when loaded
