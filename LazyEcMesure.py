@@ -291,7 +291,7 @@ def analise_network(model_name, datatype='valid'):
     infos = img_datasets[datatype].info
     # lookAtData(dataloader, dataloader.info, 5, 5)
     loss_fn = nn.MSELoss()
-    run, model, epoch, configs = load_model(model_name, branch_training=False)
+    run, model, epoch, configs = load_model(model_name, branch_training=False, train=False)
 
 
     print("=========== Analising model fit ===========")
@@ -379,7 +379,7 @@ def train():
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
 
     # ======================= BUILDING MODEL AND WANDB =======================
-    model_name = "strange-hex"
+    model_name = None
     branch_training = True  # always True unless continuing a checkpoint
     if model_name is None:
         model = models.resnet50(weights=True)
@@ -412,7 +412,7 @@ def train():
 def main():
     # TODO: implement a save for the best networks
     # train()
-    analise_network("hardy-shape", 'valid')
+    analise_network("grim-spider", 'valid')
 
 
 if __name__ == '__main__':
