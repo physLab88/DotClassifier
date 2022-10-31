@@ -104,9 +104,9 @@ def lookAtData(dataloader, info, nrows=1, ncols=1):
         axs[i, 0].set_ylabel(r'$V_{ds}$ in mV')
         for j in range(ncols):
             plt.sca(axs[i, j])
-            diagrams, labels = next(iter(dataloader))
+            diagrams, labels, idx = next(iter(dataloader))
             index = np.random.randint(0, BATCH_SIZE)
-            plt.title('Ec: %s meV' % '{:2f}'.format(labels[index]))
+            plt.title('Ec: %s meV' % '{:2f}'.format(float(labels[index])))
             plt.imshow(np.abs(diagrams[index, 0]), extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]], aspect=1, cmap='hot')
     for j in range(ncols):
         axs[-1, j].set_xlabel(r'$V_g$ in mV')
@@ -421,9 +421,11 @@ def train():
 
 # ============================ MAIN ============================
 def main():
-    # TODO: implement a save for the best networks
+    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
+                       for key in img_datasets}
+    lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
     # train()
-    analise_network("ghostly-spider", 'valid')
+    # analise_network("ghostly-spider", 'valid')
 
 
 if __name__ == '__main__':
