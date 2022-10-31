@@ -66,6 +66,7 @@ def test_loop(dataloader, model, loss_fn):
         for X, y in dataloader:
             X = X.to(device)
             y = y.to(device)
+            # print(X.size())
             pred = model(X)
             test_loss += loss_fn(pred, y).item()
             correct += (pred.argmax(1) == y).type(torch.float).sum().item()
@@ -184,7 +185,7 @@ def main():
     global ID, RUN_NAME
     configs = {
         "learning_rate": 1E-3,
-        "epochs": 150,
+        "epochs": 1,
         "batch_size": 16,
         "architecture": "ResNet50",     # modified when loaded
         "pretrained": False,            # modified when loaded

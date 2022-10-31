@@ -15,13 +15,12 @@ import os
 # ===================== GLOBAL VARIABLES =====================
 RUN_NAME = ''
 ID = wandb.util.generate_id()
-NETWORK_DIRECTORY = "Networks/POC_dotClassifier/"
-PROJECT = 'doti'
+NETWORK_DIRECTORY = "Networks/LazyEcMesure/"
+PROJECT = 'LazyEcMesure'
 ENTITY = "3it_dot_classifier"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
-DIRECTORY = "data/"
-LABELtoTYPE = ('P', 'As', 'B')
+DIRECTORY = "data/single_dot/"
 BATCH_SIZE = 32
 
 
@@ -53,13 +52,15 @@ class StabilityDataset(Dataset):
         sample = np.load(sample_name)
         sample = np.float32(sample)
 
-        label = self.info[idx]['label']
+        target = torch.FloatTensor([self.info[idx]['Ec']])
+        target_info = self.info[idx]
+        # target['target'] = torch.FloatTensor([self.info[idx]['Ec']])
         sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
         if self.transform:
             sample = self.transform(sample)
         if self.target_transform:
-            label = self.target_transform(label)
-        return sample, label
+            target = self.target_transform(target)
+        return sample, target, idx
 
 
 class RandomMultiply(object):
@@ -87,8 +88,8 @@ data_target_transforms = {'train': None,
                           'valid': None,
                           }
 
-folders = {'train': 'sim_data/',
-           'valid': 'sim_val_data/',}
+folders = {'train': 'train/',
+           'valid': 'valid/',}
 img_datasets = {
     key: StabilityDataset(root_dir=DIRECTORY + folders[key], transform=data_transforms[key],
                           target_transform=data_target_transforms[key]) for key in data_transforms}
@@ -105,7 +106,7 @@ def lookAtData(dataloader, info, nrows=1, ncols=1):
             plt.sca(axs[i, j])
             diagrams, labels = next(iter(dataloader))
             index = np.random.randint(0, BATCH_SIZE)
-            plt.title(LABELtoTYPE[labels[index]])
+            plt.title('Ec: %s meV' % '{:2f}'.format(labels[index]))
             plt.imshow(np.abs(diagrams[index, 0]), extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]], aspect=1, cmap='hot')
     for j in range(ncols):
         axs[-1, j].set_xlabel(r'$V_g$ in mV')
@@ -122,18 +123,16 @@ def test_loop(dataloader, model, loss_fn):
 
     with torch.no_grad():
         i = 0
-        for X, y in dataloader:
+        for X, y, index in dataloader:
             X = X.to(device)
             y = y.to(device)
             pred = model(X)
             test_loss += loss_fn(pred, y).item()
-            correct += (pred.argmax(1) == y).type(torch.float).sum().item()
             i += 1
             #print('v %s' % i)
-
+    # TODO implement std?
     test_loss /= num_batches
-    correct /= size
-    print(f"Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
+    print(f"Avg loss: {test_loss:>8f} \n")
     return correct, test_loss
 
 
@@ -141,7 +140,7 @@ def train_loop(dataloader, model, loss_fn, optimizer):
     size = len(dataloader.dataset)
     i=0
     cron.start('train_print')
-    for batch, (X, y) in enumerate(dataloader):
+    for batch, (X, y, index) in enumerate(dataloader):
         X = X.to(device)
         y = y.to(device)
         # Compute prediction and loss
@@ -187,10 +186,14 @@ def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_data
     model_scripted.save(NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')  # Save
 
 
-def load_model(model_name, configs, branch_training=False, tags=None):
+def load_model(model_name, configs=None, branch_training=False, tags=None):
     ''' This function allows to load previous neural nets
     filepath: the name of the model (this model must be in the
               NETWORK_DIRECTORY directory)
+    configs: the current training run configurations. some of these
+             configs will be automatically updated to match the previous runs.
+             if no configs are given, the model will automatically be loaded
+             in eval mode, and only the model will be returned
     branch_training: if false, training or testing will resume on
                      that network. if trained, the new network will be
                      saved on top of this network. if True, will branch
@@ -210,8 +213,14 @@ def load_model(model_name, configs, branch_training=False, tags=None):
     if model_file_id is None:
         raise 'model_name= %s not found in %s directory' % (model_name, NETWORK_DIRECTORY)
     model = torch.jit.load(NETWORK_DIRECTORY + model_file_id + '.pt')
-    model.train()
-    model = model.to(device)
+    if configs is None:
+        model.eval()
+        model = model.to(device)
+        return model
+    else:
+        model.train()
+        model = model.to(device)
+
 
     api = wandb.Api()
     run_id = model_file_id[model_file_id.find('_') + 1:]
@@ -236,6 +245,7 @@ def load_model(model_name, configs, branch_training=False, tags=None):
 
 
 # =================== CREATING A CUSTOM MODEL ==================
+# not used for now
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super(NeuralNetwork, self).__init__()
@@ -245,8 +255,7 @@ class NeuralNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(512, 512),
             nn.ReLU(),
-            nn.Linear(512, 10),
-            nn.Softmax(dim=1),
+            nn.Linear(512, 1),
         )
 
     def forward(self, x):
@@ -255,8 +264,80 @@ class NeuralNetwork(nn.Module):
         return logits
 
 
-# ============================ MAIN ============================
-def main():
+class EndBlock(nn.Module):
+    def __init__(self, input_size, output_size):
+        super(EndBlock, self).__init__()
+        self.linear_relu_stack = nn.Sequential(
+            #nn.Linear(input_size, input_size),
+            #nn.ReLU(),
+            nn.Linear(input_size, input_size),
+            nn.ReLU(),
+            nn.Linear(input_size, input_size),
+        )
+        self.out_layer = nn.Linear(input_size, output_size)
+
+    def forward(self, x):
+        out = self.linear_relu_stack(x)
+        logits = self.out_layer(out + x)  # skip connection
+        return logits
+
+
+# ======================== MAIN ROUTINES ========================
+def analise_network(model_name, datatype='train'):
+    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=1, shuffle=True)
+                       for key in img_datasets}
+    dataloader = img_dataloaders[datatype]
+    infos = img_datasets[datatype].info
+    # lookAtData(dataloader, dataloader.info, 5, 5)
+    loss_fn = nn.MSELoss()
+    model = load_model(model_name)
+
+    print("=========== Analising model fit ===========")
+    loss = []
+    alpha = []
+    Ec = []
+    n_levels = []
+    T = []
+    with torch.no_grad():
+        for X, y, index in dataloader:
+            info = infos[index]
+            X = X.to(device)
+            y = y.to(device)
+            pred = model(X)
+            loss.append(loss_fn(pred, y).item())
+            alpha.append(info['Cg']/(info['Cg'] + info['Cs'] + info['Cd']))
+            Ec.append(info['Ec'])
+            n_levels.append(len(info['levels']))
+            T.append(info['T'])
+            if loss[-1] > 999999:
+                X = X.to('cpu')
+                X = X.numpy()[0, 0]
+                plt.imshow(np.abs(X), aspect=1, cmap='hot')
+                plt.show()
+    loss = np.array(loss)
+    alpha = np.array(alpha)
+    Ec = np.array(Ec)
+    n_levels = np.array(n_levels)
+
+    plt.title('alpha')
+    plt.plot(loss, alpha, 'ok', ms=1)
+    plt.show()
+
+    plt.title('Ec')
+    plt.plot(loss, Ec, 'ok', ms=1)
+    plt.show()
+
+    plt.title('n_levels')
+    plt.plot(loss, n_levels, 'ok', ms=1)
+    plt.show()
+
+    plt.title('T')
+    plt.plot(loss, T, 'ok', ms=1)
+    plt.show()
+    return loss, alpha
+
+
+def train():
     # TODO delete epochs config
     # TODO randomise weights
     # TODO implement parent run everywhere
@@ -265,13 +346,13 @@ def main():
     BATCH_SIZE = 32
     configs = {
         "learning_rate": 1E-3,
-        "epochs": 10,
+        "epochs": 40,
         "batch_size": BATCH_SIZE,
-        "architecture": "ResNet50",     # modified when loaded
-        "pretrained": True,             # modified when loaded
-        "loss_fn": "CrossEntropyLoss",
+        "architecture": "ResNet50_bigFinal2",  # modified when loaded
+        "pretrained": True,  # modified when loaded
+        "loss_fn": "mean squared error loss",
         "optimiser": "SGD",
-        "data_used": "first test training data"
+        "data_used": "second test training data expanded"
     }
     tags = ['resnet50']
     print('Dataset train size = %s' % len(img_datasets['train']))
@@ -288,18 +369,19 @@ def main():
         # print(model._modules['fc'])
         last_layer = 'fc'
         temp_in = model._modules[last_layer].in_features
-        temp_out = 2
-        model._modules[last_layer] = nn.Linear(temp_in, temp_out)
+        temp_out = 1
+        model._modules[last_layer] = EndBlock(temp_in, temp_out)
+        # model._modules[last_layer] = nn.Linear(temp_in, temp_out)
         model = model.to(device)
 
         run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
                          config=configs, tags=tags)  # notes, tags, group are other usfull parameters
         init_epoch = 1
     else:
-        run, model, init_epoch = load_model(model_name, configs,  branch_training=branch_training, tags=tags)
+        run, model, init_epoch = load_model(model_name, configs, branch_training=branch_training, tags=tags)
 
     # ----------------->>> loss and optimisers
-    loss_fn = nn.CrossEntropyLoss()  # KLDivLoss()
+    loss_fn = nn.MSELoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=configs['learning_rate'])
 
     # ----------------->>> training the network
@@ -307,6 +389,12 @@ def main():
     basicTrainingSequence(model, loss_fn, optimizer, img_dataloaders['train'],
                           img_dataloaders['valid'], configs['epochs'], init_epoch=init_epoch)
 
+
+# ============================ MAIN ============================
+def main():
+    # TODO: implement a save for the best networks
+    train()
+    # analise_network("devout-snow", 'train')
 
 
 if __name__ == '__main__':
