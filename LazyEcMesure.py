@@ -165,6 +165,8 @@ def train_loop(dataloader, model, loss_fn, optimizer):
 def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_dataloader, numEpoch, init_epoch=1):
     # TODO initial assestement
     # TODO continue run / checkpoint ???
+    best = None
+    best_summary = {}
     # ------------->>> training loop
     for E in range(numEpoch):
         print("Starting Epoch %s \n ========================================" % (E+1))
@@ -176,14 +178,23 @@ def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_data
         # ------------>>> make a checkpoint
         # ---> save report
         # ---> save optim
-        # ---> save model
-        model_scripted = torch.jit.script(model)  # Export to TorchScript
-        model_scripted.save(NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')  # Save
+        # ---> save best model
+        if best is None or loss <= best:
+            best = loss
+            best_summary["epoch"] = E + init_epoch
+            best_summary["loss"] = loss
+            best_summary["accuracy"] = accu
+
+            model_scripted = torch.jit.script(model)  # Export to TorchScript
+            model_scripted.save(NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')  # Save
+        # update the summary with the current best values
+        for key in best_summary:
+            wandb.run.summary[key] = best_summary[key]
     # ------------>>> final save
     # ---> save report
     # ---> save model
-    model_scripted = torch.jit.script(model)  # Export to TorchScript
-    model_scripted.save(NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')  # Save
+    # model_scripted = torch.jit.script(model)  # Export to TorchScript
+    # model_scripted.save(NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')  # Save
 
 
 def load_model(model_name, configs=None, branch_training=True, tags=None, train=True):
@@ -269,8 +280,8 @@ class EndBlock(nn.Module):
     def __init__(self, input_size, output_size):
         super(EndBlock, self).__init__()
         self.linear_relu_stack = nn.Sequential(
-            #nn.Linear(input_size, input_size),
-            #nn.ReLU(),
+            # nn.Linear(input_size, input_size),
+            # nn.ReLU(),
             nn.Linear(input_size, input_size),
             nn.ReLU(),
             nn.Linear(input_size, input_size),
@@ -364,7 +375,7 @@ def train():
     BATCH_SIZE = 32
     configs = {
         "learning_rate": 1E-3,
-        "epochs": 1,
+        "epochs": 5,
         "batch_size": BATCH_SIZE,
         "architecture": "ResNet50",  # modified when loaded
         "pretrained": True,  # modified when loaded
@@ -379,7 +390,7 @@ def train():
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
 
     # ======================= BUILDING MODEL AND WANDB =======================
-    model_name = None
+    model_name = "chilling-fang"
     branch_training = True  # always True unless continuing a checkpoint
     if model_name is None:
         model = models.resnet50(weights=True)
@@ -412,7 +423,7 @@ def train():
 def main():
     # TODO: implement a save for the best networks
     # train()
-    analise_network("grim-spider", 'valid')
+    analise_network("ghostly-spider", 'valid')
 
 
 if __name__ == '__main__':
