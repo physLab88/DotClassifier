@@ -6,6 +6,7 @@ from torchvision import transforms
 import numpy as np
 from numpy.random import randint
 import matplotlib.pyplot as plt
+from math import ceil
 
 from torchvision import models
 import yaml
@@ -22,7 +23,7 @@ ENTITY = "3it_dot_classifier"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
 DIRECTORY = "data/sim2_0/"
-BATCH_SIZE = 32
+BATCH_SIZE = None
 RANDOM_CROP = True
 
 
@@ -61,10 +62,25 @@ class StabilityDataset(Dataset):
         newBox = []
         if RANDOM_CROP:
             box = target_info['box']
-            temp = randint(0, box[1][1] + 4)
-            newBox = [[randint(box[0][0] - 4, target_info['nVg']), target_info['nVds'] - temp],
+            temp = randint(0, box[1][1] - 4)
+            newBox = [[randint(box[0][0] + 4, target_info['nVg']), target_info['nVds'] - temp],
                       [randint(0, box[1][0]), temp],  # uper left corner
                       ]  # lower right
+            MIN_SIZE = 33
+            temp = newBox[0][0] - newBox[1][0]
+            if temp < MIN_SIZE:
+                temp = ceil((MIN_SIZE - temp)/2)
+                newBox[0][0] += temp
+                newBox[1][0] -= temp
+                if newBox[1][0] < 0:
+                    newBox[0][0] -= newBox[1][0]
+                    newBox[1][0] = 0
+
+            temp = newBox[0][1] - newBox[1][1]
+            if temp < MIN_SIZE:
+                temp = ceil((MIN_SIZE - temp)/2)
+                newBox[1][1] -= temp
+                newBox[0][1] += temp
             sample = sample[newBox[1][1]:newBox[0][1], newBox[1][0]:newBox[0][0]]
             # print("old: %s,\t new: %s" % (box, newBox))
         newBox = torch.IntTensor(newBox)
@@ -75,6 +91,7 @@ class StabilityDataset(Dataset):
             sample = self.transform(sample)
         if self.target_transform:
             target = self.target_transform(target)
+        # print(sample.size())
         return sample, target, idx  #, newBox
 
 
@@ -398,27 +415,27 @@ def train():
     # TODO implement parent run everywhere
 
     global ID, RUN_NAME, BATCH_SIZE
-    BATCH_SIZE = 32
+    BATCH_SIZE = 1
     configs = {
         "learning_rate": 1E-3,
-        "epochs": 5,
+        "epochs": 20,
         "batch_size": BATCH_SIZE,
         "architecture": "ResNet50",  # modified when loaded
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
         "optimiser": "SGD",
-        "data_used": "first 2.0 generation",
+        "data_used": "first 2.0 random_crop",
         "data_size": len(img_datasets['train']),
         "valid_size": len(img_datasets['valid'])
     }
     tags = ['resnet50']
     print('Dataset train size = %s' % len(img_datasets['train']))
-    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True, collate_fn=my_collate)
+    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)  # , collate_fn=my_collate)
                        for key in img_datasets}
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
 
     # ======================= BUILDING MODEL AND WANDB =======================
-    model_name = None
+    model_name = "playful-pine"
     branch_training = True  # always True unless continuing a checkpoint
     if model_name is None:
         model = models.resnet50(weights=True)
@@ -453,7 +470,7 @@ def main():
     #                    for key in img_datasets}
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
     train()
-    # analise_network("ghostly-spider", 'valid')
+    # analise_network("playful-pine", 'valid')
 
 
 if __name__ == '__main__':
