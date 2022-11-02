@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets
 from torchvision import transforms
 import numpy as np
+from numpy.random import randint
 import matplotlib.pyplot as plt
 
 from torchvision import models
@@ -20,7 +21,7 @@ PROJECT = 'LazyEcMesure'
 ENTITY = "3it_dot_classifier"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
-DIRECTORY = "data/single_dot/"
+DIRECTORY = "data/sim2_0/"
 BATCH_SIZE = 32
 
 
@@ -54,6 +55,11 @@ class StabilityDataset(Dataset):
 
         target = torch.FloatTensor([self.info[idx]['Ec']])
         target_info = self.info[idx]
+
+        # random crop:
+        # box = target_info['box']
+        # sample = sample[]
+
         # target['target'] = torch.FloatTensor([self.info[idx]['Ec']])
         sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
         if self.transform:
@@ -75,12 +81,12 @@ class RandomMultiply(object):
 data_transforms = {'train': transforms.Compose([
     RandomMultiply(0.7, 1.3),
     transforms.ToTensor(),
-    transforms.RandomAffine(degrees=0, translate=(0.1, 0.025)),
+    # transforms.RandomAffine(degrees=0, translate=(0.1, 0.025)),
     ]),
                    'valid': transforms.Compose([
     RandomMultiply(0.7, 1.3),
     transforms.ToTensor(),
-    transforms.RandomAffine(degrees=0, translate=(0.1, 0.025)),
+    # transforms.RandomAffine(degrees=0, translate=(0.1, 0.025)),
     ]),
 }
 # transforms.GaussianBlur(kernel_size[, sigma])
@@ -108,6 +114,7 @@ def lookAtData(dataloader, info, nrows=1, ncols=1):
             index = np.random.randint(0, BATCH_SIZE)
             plt.title('Ec: %s meV' % '{:2f}'.format(float(labels[index])))
             plt.imshow(np.abs(diagrams[index, 0]), extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]], aspect=1, cmap='hot')
+            plt.xlim([0, 290])
     for j in range(ncols):
         axs[-1, j].set_xlabel(r'$V_g$ in mV')
     #plt.tight_layout()
@@ -320,7 +327,7 @@ def analise_network(model_name, datatype='valid'):
             pred = model(X)
             error.append(abs(float(pred - info['Ec'])))
             loss.append(loss_fn(pred, y).item())
-            alpha.append(info['Cg']/(info['Cg'] + info['Cs'] + info['Cd']))
+            alpha.append(info['ag'])
             Ec.append(info['Ec'])
             n_levels.append(len(info['levels']))
             T.append(info['T'])
@@ -381,7 +388,9 @@ def train():
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
         "optimiser": "SGD",
-        "data_used": "second test training data expanded"
+        "data_used": "first 2.0 generation",
+        "data_size": len(img_datasets['train']),
+        "valid_size": len(img_datasets['valid'])
     }
     tags = ['resnet50']
     print('Dataset train size = %s' % len(img_datasets['train']))
@@ -390,7 +399,7 @@ def train():
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
 
     # ======================= BUILDING MODEL AND WANDB =======================
-    model_name = "chilling-fang"
+    model_name = None
     branch_training = True  # always True unless continuing a checkpoint
     if model_name is None:
         model = models.resnet50(weights=True)
