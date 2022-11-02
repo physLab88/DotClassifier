@@ -23,6 +23,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
 DIRECTORY = "data/sim2_0/"
 BATCH_SIZE = 32
+RANDOM_CROP = True
 
 
 # ======================= SETTING UP DATASET ========================
@@ -57,8 +58,16 @@ class StabilityDataset(Dataset):
         target_info = self.info[idx]
 
         # random crop:
-        # box = target_info['box']
-        # sample = sample[]
+        newBox = []
+        if RANDOM_CROP:
+            box = target_info['box']
+            temp = randint(0, box[1][1] + 4)
+            newBox = [[randint(box[0][0] - 4, target_info['nVg']), target_info['nVds'] - temp],
+                      [randint(0, box[1][0]), temp],  # uper left corner
+                      ]  # lower right
+            sample = sample[newBox[1][1]:newBox[0][1], newBox[1][0]:newBox[0][0]]
+            # print("old: %s,\t new: %s" % (box, newBox))
+        newBox = torch.IntTensor(newBox)
 
         # target['target'] = torch.FloatTensor([self.info[idx]['Ec']])
         sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
@@ -66,7 +75,16 @@ class StabilityDataset(Dataset):
             sample = self.transform(sample)
         if self.target_transform:
             target = self.target_transform(target)
-        return sample, target, idx
+        return sample, target, idx  #, newBox
+
+
+# a simple custom collate function, just to show the idea
+def my_collate(batch):
+    data = [item[0] for item in batch]
+    target = [item[1] for item in batch]
+    idx = [item[2] for item in batch]
+    # target = torch.LongTensor(target)
+    return [data, target, idx]
 
 
 class RandomMultiply(object):
@@ -111,9 +129,10 @@ def lookAtData(dataloader, info, nrows=1, ncols=1):
         for j in range(ncols):
             plt.sca(axs[i, j])
             diagrams, labels, idx = next(iter(dataloader))
+            #print(diagrams[0].size())
             index = np.random.randint(0, BATCH_SIZE)
             plt.title('Ec: %s meV' % '{:2f}'.format(float(labels[index])))
-            plt.imshow(np.abs(diagrams[index, 0]), extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]], aspect=1, cmap='hot')
+            plt.imshow(np.abs(diagrams[index][0]), extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]], aspect=1, cmap='hot')
             plt.xlim([0, 290])
     for j in range(ncols):
         axs[-1, j].set_xlabel(r'$V_g$ in mV')
@@ -394,7 +413,7 @@ def train():
     }
     tags = ['resnet50']
     print('Dataset train size = %s' % len(img_datasets['train']))
-    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
+    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True, collate_fn=my_collate)
                        for key in img_datasets}
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
 
@@ -430,10 +449,10 @@ def train():
 
 # ============================ MAIN ============================
 def main():
-    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
-                       for key in img_datasets}
-    lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
-    # train()
+    # img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True, collate_fn=my_collate)
+    #                    for key in img_datasets}
+    # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
+    train()
     # analise_network("ghostly-spider", 'valid')
 
 
