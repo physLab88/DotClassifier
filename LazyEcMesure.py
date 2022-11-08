@@ -345,7 +345,7 @@ def analise_network(model_name, datatype='valid'):
     infos = img_datasets[datatype].info
     # lookAtData(dataloader, dataloader.info, 5, 5)
     loss_fn = nn.MSELoss()
-    run, model, epoch, configs = load_model(model_name, branch_training=False, train=False)
+    run, model, epoch, configs = load_model(model_name, branch_training=False, train=True)
 
 
     print("=========== Analising model fit ===========")
@@ -469,8 +469,8 @@ def main():
     # img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True, collate_fn=my_collate)
     #                    for key in img_datasets}
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
-    train()
-    # analise_network("playful-pine", 'valid')
+    #train()
+    analise_network("iconic-capybara", 'valid')
 
 
 if __name__ == '__main__':
