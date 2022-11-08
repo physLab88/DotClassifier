@@ -1,6 +1,9 @@
 import numpy as np
+import torch
 import matplotlib.pyplot as plt
 from scipy.stats import beta
+from math import ceil
+from numpy.random import randint
 
 
 # ===================== DECLARING CONSTANTS ======================
@@ -18,7 +21,37 @@ def pltBeta(a, b, loc=0.0, scale=1.0):
 """
 
 
-def threshold_current(Vg, Vds, Vsat_range):
+def random_crop(sample, target_info):
+    MIN_SIZE = 33
+    box = target_info['box']
+    temp = randint(0, box[1][1] - 4)
+    newBox = [[randint(box[0][0] + 4, target_info['nVg']), target_info['nVds'] - temp],
+              [randint(0, box[1][0]), temp],  # uper left corner
+              ]  # lower right
+
+    temp = newBox[0][0] - newBox[1][0]
+    if temp < MIN_SIZE:
+        temp = ceil((MIN_SIZE - temp) / 2)
+        newBox[0][0] += temp
+        newBox[1][0] -= temp
+        if newBox[1][0] < 0:
+            newBox[0][0] -= newBox[1][0]
+            newBox[1][0] = 0
+
+    temp = newBox[0][1] - newBox[1][1]
+    if temp < MIN_SIZE:
+        temp = ceil((MIN_SIZE - temp) / 2)
+        newBox[1][1] -= temp
+        newBox[0][1] += temp
+    sample = sample[newBox[1][1]:newBox[0][1], newBox[1][0]:newBox[0][0]]
+    # print("old: %s,\t new: %s" % (box, newBox))
+    return sample, newBox
+
+
+def threshold_current(sample, target_info):
+    pass
+
+def calc_threshold_current(Vg, Vds, Vsat_range):
     """ This function is responsible to immitate the transistor transiting
     into cunduction mode as we hit the Vg threshold voltage."""
     Vsat_range = np.array(Vsat_range)

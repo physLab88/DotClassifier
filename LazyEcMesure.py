@@ -14,6 +14,8 @@ import cronos as cron
 import wandb
 import os
 
+import diagram_imperfections as di
+
 # ===================== GLOBAL VARIABLES =====================
 RUN_NAME = ''
 ID = wandb.util.generate_id()
@@ -23,7 +25,7 @@ ENTITY = "3it_dot_classifier"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
 DIRECTORY = "data/sim2_0/"
-BATCH_SIZE = None
+BATCH_SIZE = 1
 RANDOM_CROP = True
 
 
@@ -61,28 +63,7 @@ class StabilityDataset(Dataset):
         # random crop:
         newBox = []
         if RANDOM_CROP:
-            box = target_info['box']
-            temp = randint(0, box[1][1] - 4)
-            newBox = [[randint(box[0][0] + 4, target_info['nVg']), target_info['nVds'] - temp],
-                      [randint(0, box[1][0]), temp],  # uper left corner
-                      ]  # lower right
-            MIN_SIZE = 33
-            temp = newBox[0][0] - newBox[1][0]
-            if temp < MIN_SIZE:
-                temp = ceil((MIN_SIZE - temp)/2)
-                newBox[0][0] += temp
-                newBox[1][0] -= temp
-                if newBox[1][0] < 0:
-                    newBox[0][0] -= newBox[1][0]
-                    newBox[1][0] = 0
-
-            temp = newBox[0][1] - newBox[1][1]
-            if temp < MIN_SIZE:
-                temp = ceil((MIN_SIZE - temp)/2)
-                newBox[1][1] -= temp
-                newBox[0][1] += temp
-            sample = sample[newBox[1][1]:newBox[0][1], newBox[1][0]:newBox[0][0]]
-            # print("old: %s,\t new: %s" % (box, newBox))
+            sample, newBox = di.random_crop(sample, target_info)
         newBox = torch.IntTensor(newBox)
 
         # target['target'] = torch.FloatTensor([self.info[idx]['Ec']])
@@ -93,15 +74,6 @@ class StabilityDataset(Dataset):
             target = self.target_transform(target)
         # print(sample.size())
         return sample, target, idx  #, newBox
-
-
-# a simple custom collate function, just to show the idea
-def my_collate(batch):
-    data = [item[0] for item in batch]
-    target = [item[1] for item in batch]
-    idx = [item[2] for item in batch]
-    # target = torch.LongTensor(target)
-    return [data, target, idx]
 
 
 class RandomMultiply(object):
@@ -430,7 +402,7 @@ def train():
     }
     tags = ['resnet50']
     print('Dataset train size = %s' % len(img_datasets['train']))
-    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)  # , collate_fn=my_collate)
+    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
                        for key in img_datasets}
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
 
@@ -466,11 +438,11 @@ def train():
 
 # ============================ MAIN ============================
 def main():
-    # img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True, collate_fn=my_collate)
-    #                    for key in img_datasets}
-    # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
+    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
+                       for key in img_datasets}
+    lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
     #train()
-    analise_network("iconic-capybara", 'valid')
+    #analise_network("iconic-capybara", 'valid')
 
 
 if __name__ == '__main__':
