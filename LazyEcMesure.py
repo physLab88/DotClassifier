@@ -329,6 +329,18 @@ class EndBlock(nn.Module):
         return logits
 
 
+def sets_running_stats(node):
+    try:
+        if type(node) == nn.BatchNorm2d:
+            node.track_running_stats = False
+            return
+        for key in node._modules.keys():
+            sets_running_stats(node._modules[key])
+    except:
+        if type(node) == nn.BatchNorm2d:
+            node.track_running_stats = False
+
+
 # ======================== MAIN ROUTINES ========================
 def analise_network(model_name, datatype='valid'):
     img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=1, shuffle=True)
@@ -418,7 +430,8 @@ def train():
         "optimiser": "SGD",
         "data_used": "first 2.0 log",
         "data_size": len(img_datasets['train']),
-        "valid_size": len(img_datasets['valid'])
+        "valid_size": len(img_datasets['valid']),
+        "running_stats": False,
     }
     tags = ['resnet50']
     print('Dataset train size = %s' % len(img_datasets['train']))
@@ -438,6 +451,8 @@ def train():
         temp_out = 1
         # model._modules[last_layer] = EndBlock(temp_in, temp_out)
         model._modules[last_layer] = nn.Linear(temp_in, temp_out)
+        if not configs["running_stats"]:
+            sets_running_stats(model)
         model = model.to(device)
 
         run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
