@@ -76,6 +76,7 @@ class StabilityDataset(Dataset):
 
         # target['target'] = torch.FloatTensor([self.info[idx]['Ec']])
         sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
+        sample = sample.astype('float32')
         if self.transform:
             sample = self.transform(sample)
         if self.target_transform:
@@ -412,7 +413,7 @@ def train():
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
         "optimiser": "SGD",
-        "data_used": "first 2.0 random_crop",
+        "data_used": "first 2.0 thresh_current",
         "data_size": len(img_datasets['train']),
         "valid_size": len(img_datasets['valid'])
     }
@@ -454,10 +455,10 @@ def train():
 
 # ============================ MAIN ============================
 def main():
-    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
-                       for key in img_datasets}
-    lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
-    #train()
+    #img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
+    #                   for key in img_datasets}
+    #lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
+    train()
     #analise_network("iconic-capybara", 'valid')
 
 
