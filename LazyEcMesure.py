@@ -60,6 +60,8 @@ class StabilityDataset(Dataset):
 
         target = torch.FloatTensor([self.info[idx]['Ec']])
         target_info = self.info[idx]
+        # here, we define the target Ec in Vds_pixels
+        target = target / ((target_info["Vds_range"][1] - target_info["Vds_range"][0])/(target_info["nVds"]-1))
 
 
         # thershold current
@@ -74,7 +76,7 @@ class StabilityDataset(Dataset):
         sample = di.random_multiply(sample, np.exp(beta.rvs(2.8, 3.7, -28, 8.5)))
         sample = di.clip_current(sample, 2E-14, 1E-7)
 
-        # target['target'] = torch.FloatTensor([self.info[idx]['Ec']])
+        #sample = np.log(np.abs(sample))
         sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
         sample = sample.astype('float32')
         if self.transform:
@@ -132,9 +134,9 @@ def lookAtData(dataloader, info, nrows=1, ncols=1):
 
             diagram = np.abs(diagrams[index][0])
             size = diagram.size()
-            print(size)
+            # print(size)
             Imin = diagram[:floor(size[0]/2)-2, :].min()
-            print(np.log(Imin))
+            # print(np.log(Imin))
             diagram = di.clip_current(diagram, Imin)
 
             plt.title('Ec: %s meV' % '{:2f}'.format(float(labels[index])))
@@ -155,15 +157,16 @@ def test_loop(dataloader, model, loss_fn):
 
     with torch.no_grad():
         i = 0
-        for X, y, index in dataloader:
-            X = X.to(device)
-            y = y.to(device)
-            pred = model(X)
-            test_loss += loss_fn(pred, y).item()
-            i += 1
-            #print('v %s' % i)
+        for k in range(3):
+            for X, y, index in dataloader:
+                X = X.to(device)
+                y = y.to(device)
+                pred = model(X)
+                test_loss += loss_fn(pred, y).item()
+                i += 1
+                #print('v %s' % i)
     # TODO implement std?
-    test_loss /= num_batches
+    test_loss /= num_batches*3
     print(f"Avg loss: {test_loss:>8f} \n")
     return correct, test_loss
 
@@ -407,13 +410,13 @@ def train():
     BATCH_SIZE = 1
     configs = {
         "learning_rate": 1E-3,
-        "epochs": 20,
+        "epochs": 10,
         "batch_size": BATCH_SIZE,
         "architecture": "ResNet50",  # modified when loaded
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
         "optimiser": "SGD",
-        "data_used": "first 2.0 thresh_current",
+        "data_used": "first 2.0 log",
         "data_size": len(img_datasets['train']),
         "valid_size": len(img_datasets['valid'])
     }
@@ -424,7 +427,7 @@ def train():
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
 
     # ======================= BUILDING MODEL AND WANDB =======================
-    model_name = "playful-pine"
+    model_name = None
     branch_training = True  # always True unless continuing a checkpoint
     if model_name is None:
         model = models.resnet50(weights=True)
@@ -455,10 +458,11 @@ def train():
 
 # ============================ MAIN ============================
 def main():
-    #img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
-    #                   for key in img_datasets}
-    #lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
-    train()
+    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
+                      for key in img_datasets}
+    for i in range(5):
+        lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
+    #train()
     #analise_network("iconic-capybara", 'valid')
 
 

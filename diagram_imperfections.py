@@ -76,7 +76,8 @@ def threshold_current(sample, target_info):
     if n_levels > MAX_LEVELS:
         n_levels = MAX_LEVELS
     # next, vsat can start inside the first diamond or be at the \simeq end of the last diamond
-    Vsat_range = [diamond_width*(3/2), diamond_width*(1/2 + (n_levels - 1))]
+    Vsat_range = [diamond_width*(3/2), diamond_width*(3/2) + 1] # [diamond_width*(3/2), diamond_width*(1/2 + (n_levels - 1))]
+    #Vsat_range = [diamond_width*(3/2), diamond_width*(1/2 + (n_levels - 1))]
     thresh_I = calc_threshold_current(Vg, Vds, Vsat_range)
     return sample + thresh_I
 
