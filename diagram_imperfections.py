@@ -7,7 +7,7 @@ from numpy.random import randint
 
 
 # ===================== DECLARING CONSTANTS ======================
-"""
+
 def pltBeta(a, b, loc=0.0, scale=1.0):
     ''' this function allows you to visualise a distribution function
     (not by using a statistical aproach)'''
@@ -18,7 +18,13 @@ def pltBeta(a, b, loc=0.0, scale=1.0):
             'r-', lw=3, alpha=0.6, label='beta pdf')
     plt.ylim(bottom=0)
     plt.show()
-"""
+
+
+def random_multiply(sample, min, max=None):
+    if max is None:
+        return sample * min
+    width = max - min
+    return sample * (min + np.random.uniform()*width)
 
 
 def random_crop(sample, target_info):
@@ -48,19 +54,43 @@ def random_crop(sample, target_info):
     return sample, newBox
 
 
+def clip_current(sample, low=None, high=None):
+    if low is not None:
+        sample[np.abs(sample) < low] = low * np.sign(sample[np.abs(sample) < low])
+        sample[sample == 0] = low
+    if high is not None:
+        sample[np.abs(sample) > high] = high * np.sign(sample[np.abs(sample) > high])
+    return sample
+
+
 def threshold_current(sample, target_info):
-    pass
+    temp = target_info['Vg_range']
+    Vg = np.linspace(temp[0], temp[1], target_info['nVg'])
+    temp = target_info['Vds_range']
+    Vds = np.linspace(temp[0], temp[1], target_info['nVds'])
+
+    # defining the possible range of Vsat
+    diamond_width = target_info['Ec']/target_info['ag']
+    n_levels = np.array(target_info['levels']).sum()
+    MAX_LEVELS = 5
+    if n_levels > MAX_LEVELS:
+        n_levels = MAX_LEVELS
+    # next, vsat can start inside the first diamond or be at the \simeq end of the last diamond
+    Vsat_range = [diamond_width*(3/2), diamond_width*(1/2 + (n_levels - 1))]
+    thresh_I = calc_threshold_current(Vg, Vds, Vsat_range)
+    return sample + thresh_I
+
 
 def calc_threshold_current(Vg, Vds, Vsat_range):
     """ This function is responsible to immitate the transistor transiting
     into cunduction mode as we hit the Vg threshold voltage."""
+    # TODO it is possible I_rise is underestimated du to electron temperature in the experimental data
     Vsat_range = np.array(Vsat_range)
     I_rise = beta.rvs(1.6, 5.5, 0.15, 0.85)
     I_slope = beta.rvs(2.2, 3.0, 0.015, 0.085)
     I_sat = beta.rvs(3.7, 2.2, -25, 8.5)
-    V_sat = beta.rvs(2.7, 1.5, loc=Vsat_range.min(), scale=np.abs(Vsat_range[1] - Vsat_range[0]))
+    V_sat = beta.rvs(2.7, 1.5, loc=Vsat_range.min(), scale=np.abs(Vsat_range[1] - Vsat_range[0])) + (I_sat+30)/I_rise
     I_mask = Vg < V_sat
-    #I_dark = np.exp(-32)
 
     I = np.zeros(len(Vg))
     I[I_mask] = (Vg[I_mask] - V_sat) * I_rise + I_sat
@@ -69,15 +99,19 @@ def calc_threshold_current(Vg, Vds, Vsat_range):
     I = np.tile(I, [len(Vds), 1])
     I = np.exp(I)
     temp = np.tile(Vds[:, None], [1, len(Vg)])
-    I = I*temp
+    I = I*temp  # here, we need to multyply by -Vd
 
-    #I[np.abs(I)<I_dark] = I_dark * np.sign(I[np.abs(I)<I_dark])
-    #I = np.log10(np.abs(I))
-    #print(I)
-    #plt.title(V_sat)
-    #plt.imshow(I, cmap='hot')
-    #cbar = plt.colorbar(label='current in ??????')
-    #plt.show()
+    # re-adjusting the scale of the current
+    I = I/np.exp(I_sat)  # trying a normalisation technique
+    I = I*np.exp(beta.rvs(1.5, 1.5, 2.5, 1.5))
+    # I_dark = np.exp(-32)
+    # I[np.abs(I)<I_dark] = I_dark * np.sign(I[np.abs(I)<I_dark])
+    # I = np.log10(np.abs(I))
+    # print(I)
+    # plt.title(V_sat)
+    # plt.imshow(I, cmap='hot')
+    # cbar = plt.colorbar(label='current in ??????')
+    # plt.show()
     return I
 
 
@@ -106,13 +140,13 @@ def calc_pente(coords):
 
 # ============================ MAIN ==============================
 def main():
-    # pltBeta(2.7, 1.5)
+    pltBeta(1.5, 1.5, 2.5, 1.5)
     for coords in I_slope_coords:
         print(calc_pente(coords))
     Vg = np.linspace(0, 100, 100)
     Vds = np.linspace(-15, 15, 100)
     for i in range(30):
-        threshold_current(Vg, Vds, [40, 70])
+        calc_threshold_current(Vg, Vds, [40, 70])
     pass
 
 

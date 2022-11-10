@@ -6,7 +6,8 @@ from torchvision import transforms
 import numpy as np
 from numpy.random import randint
 import matplotlib.pyplot as plt
-from math import ceil
+from math import ceil, floor
+from scipy.stats import beta
 
 from torchvision import models
 import yaml
@@ -60,11 +61,18 @@ class StabilityDataset(Dataset):
         target = torch.FloatTensor([self.info[idx]['Ec']])
         target_info = self.info[idx]
 
+
+        # thershold current
+        sample = di.threshold_current(sample, target_info)
+
         # random crop:
         newBox = []
         if RANDOM_CROP:
             sample, newBox = di.random_crop(sample, target_info)
         newBox = torch.IntTensor(newBox)
+
+        sample = di.random_multiply(sample, np.exp(beta.rvs(2.8, 3.7, -28, 8.5)))
+        sample = di.clip_current(sample, 2E-14, 1E-7)
 
         # target['target'] = torch.FloatTensor([self.info[idx]['Ec']])
         sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
@@ -86,12 +94,12 @@ class RandomMultiply(object):
 
 
 data_transforms = {'train': transforms.Compose([
-    RandomMultiply(0.7, 1.3),
+    # RandomMultiply(0.7, 1.3),
     transforms.ToTensor(),
     # transforms.RandomAffine(degrees=0, translate=(0.1, 0.025)),
     ]),
                    'valid': transforms.Compose([
-    RandomMultiply(0.7, 1.3),
+    # RandomMultiply(0.7, 1.3),
     transforms.ToTensor(),
     # transforms.RandomAffine(degrees=0, translate=(0.1, 0.025)),
     ]),
@@ -120,8 +128,16 @@ def lookAtData(dataloader, info, nrows=1, ncols=1):
             diagrams, labels, idx = next(iter(dataloader))
             #print(diagrams[0].size())
             index = np.random.randint(0, BATCH_SIZE)
+
+            diagram = np.abs(diagrams[index][0])
+            size = diagram.size()
+            print(size)
+            Imin = diagram[:floor(size[0]/2)-2, :].min()
+            print(np.log(Imin))
+            diagram = di.clip_current(diagram, Imin)
+
             plt.title('Ec: %s meV' % '{:2f}'.format(float(labels[index])))
-            plt.imshow(np.abs(diagrams[index][0]), extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]], aspect=1, cmap='hot')
+            plt.imshow(np.log10(diagram), extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]], aspect=1, cmap='hot')
             plt.xlim([0, 290])
     for j in range(ncols):
         axs[-1, j].set_xlabel(r'$V_g$ in mV')
