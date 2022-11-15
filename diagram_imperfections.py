@@ -3,8 +3,8 @@ import torch
 import matplotlib.pyplot as plt
 from scipy.stats import beta
 from math import ceil
-from numpy.random import randint
-
+from numpy.random import randint, random
+from scipy.ndimage import gaussian_filter
 
 # ===================== DECLARING CONSTANTS ======================
 
@@ -26,6 +26,13 @@ def random_multiply(sample, min, max=None):
     width = max - min
     return sample * (min + np.random.uniform()*width)
 
+
+def gaussian_blur(sample, target_info, min, max):
+    Vg_res = abs(target_info["Vg_range"][1] - target_info["Vg_range"][0])/(target_info["Vg_range"][1]-1)  # mV/pix
+    Vds_res = abs(target_info["Vds_range"][1] - target_info["Vds_range"][0])/(target_info["Vds_range"][1]-1)  # mV/pix
+    sig_Vg = (random() * (max - min) + min)/Vg_res  # in x
+    sig_Vds = (random() * (max-min) + min)/Vds_res  # in y
+    return gaussian_filter(sample, [sig_Vds, sig_Vg])
 
 def random_crop(sample, target_info):
     MIN_SIZE = 33
@@ -71,13 +78,14 @@ def threshold_current(sample, target_info):
 
     # defining the possible range of Vsat
     diamond_width = target_info['Ec']/target_info['ag']
-    n_levels = np.array(target_info['levels']).sum()
+    n_levels = np.array(target_info['degens']).sum()
     MAX_LEVELS = 5
     if n_levels > MAX_LEVELS:
         n_levels = MAX_LEVELS
+    # print(n_levels)
+    # print(target_info['degens'])
     # next, vsat can start inside the first diamond or be at the \simeq end of the last diamond
-    Vsat_range = [diamond_width*(3/2), diamond_width*(3/2) + 1] # [diamond_width*(3/2), diamond_width*(1/2 + (n_levels - 1))]
-    #Vsat_range = [diamond_width*(3/2), diamond_width*(1/2 + (n_levels - 1))]
+    Vsat_range = [diamond_width*(3/2), diamond_width*(1/2 + (n_levels - 1))]
     thresh_I = calc_threshold_current(Vg, Vds, Vsat_range)
     return sample + thresh_I
 

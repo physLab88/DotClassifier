@@ -26,6 +26,7 @@ ENTITY = "3it_dot_classifier"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
 DIRECTORY = "data/sim2_0/"
+EXP_DIRECTORY = "data/exp_w_labels/"
 BATCH_SIZE = 1
 RANDOM_CROP = True
 
@@ -63,7 +64,8 @@ class StabilityDataset(Dataset):
         # here, we define the target Ec in Vds_pixels
         target = target / ((target_info["Vds_range"][1] - target_info["Vds_range"][0])/(target_info["nVds"]-1))
 
-
+        # gaussian blur
+        sample = di.gaussian_blur(sample, target_info, 1.0, 1.0)
         # thershold current
         sample = di.threshold_current(sample, target_info)
 
@@ -76,7 +78,51 @@ class StabilityDataset(Dataset):
         sample = di.random_multiply(sample, np.exp(beta.rvs(2.8, 3.7, -28, 8.5)))
         sample = di.clip_current(sample, 2E-14, 1E-7)
 
-        #sample = np.log(np.abs(sample))
+        sample = np.log(np.abs(sample))
+        sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
+        sample = sample.astype('float32')
+        if self.transform:
+            sample = self.transform(sample)
+        if self.target_transform:
+            target = self.target_transform(target)
+        # print(sample.size())
+        return sample, target, idx  #, newBox
+
+
+class ExperimentalDataset(Dataset):
+    """ Class that allows to retreive the training and validation data"""
+    def __init__(self, root_dir, transform=None, target_transform=None):
+        """
+        root_dir (string): Directory with all the images.
+        transform (callable, optional): Optional transform to be applied
+                on a sample.
+        """
+        f = open(root_dir + '_data_indexer.yaml', 'r')
+        self.info = yaml.load(f, Loader=yaml.FullLoader)
+        self.root_dir = root_dir
+        self.transform = transform
+        self.target_transform = target_transform
+        return
+
+    def __len__(self):
+        return len(self.info)
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        sample_name = self.root_dir + self.info[idx]['f'] + '.npy'
+        sample = np.load(sample_name)
+        sample = np.float32(sample)
+
+        target = torch.FloatTensor([self.info[idx]['Ec']])
+        target_info = self.info[idx]
+        # here, we define the target Ec in Vds_pixels
+        target = target / ((target_info["Vds_range"][1] - target_info["Vds_range"][0])/(target_info["nVds"]-1))
+
+        sample = di.clip_current(sample, 2E-14, 1E-7)
+
+        sample = np.log(np.abs(sample))
         sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
         sample = sample.astype('float32')
         if self.transform:
@@ -99,7 +145,7 @@ class RandomMultiply(object):
 data_transforms = {'train': transforms.Compose([
     # RandomMultiply(0.7, 1.3),
     transforms.ToTensor(),
-    # transforms.RandomAffine(degrees=0, translate=(0.1, 0.025)),
+    # transforms.RandomAffine(degrees=0, translate=(0, 0.025)),
     ]),
                    'valid': transforms.Compose([
     # RandomMultiply(0.7, 1.3),
@@ -107,6 +153,7 @@ data_transforms = {'train': transforms.Compose([
     # transforms.RandomAffine(degrees=0, translate=(0.1, 0.025)),
     ]),
 }
+exp_transform = transforms.Compose([transforms.ToTensor()])
 # transforms.GaussianBlur(kernel_size[, sigma])
 data_target_transforms = {'train': None,
                           'valid': None,
@@ -117,10 +164,11 @@ folders = {'train': 'train/',
 img_datasets = {
     key: StabilityDataset(root_dir=DIRECTORY + folders[key], transform=data_transforms[key],
                           target_transform=data_target_transforms[key]) for key in data_transforms}
+exp_dataset = ExperimentalDataset(root_dir=EXP_DIRECTORY, transform=exp_transform)
 
 
 def lookAtData(dataloader, info, nrows=1, ncols=1):
-    fig, axs = plt.subplots(nrows, ncols, sharex=True, sharey=True)
+    fig, axs = plt.subplots(nrows, ncols)# , sharex=True, sharey=True)
     info = info[0]
     Vg = info['Vg_range']
     Vds = info['Vds_range']
@@ -132,20 +180,34 @@ def lookAtData(dataloader, info, nrows=1, ncols=1):
             #print(diagrams[0].size())
             index = np.random.randint(0, BATCH_SIZE)
 
-            diagram = np.abs(diagrams[index][0])
+            diagram = diagrams[index][0]
             size = diagram.size()
-            # print(size)
-            Imin = diagram[:floor(size[0]/2)-2, :].min()
+            print(size)
+            # Imin = diagram[:floor(size[0]/2)-2, :].min()
             # print(np.log(Imin))
-            diagram = di.clip_current(diagram, Imin)
+            # diagram = di.clip_current(diagram, Imin)
 
             plt.title('Ec: %s meV' % '{:2f}'.format(float(labels[index])))
-            plt.imshow(np.log10(diagram), extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]], aspect=1, cmap='hot')
-            plt.xlim([0, 290])
+            plt.imshow(diagram, aspect=1, cmap='hot')  # extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]]
+            # plt.xlim([0, 290])
     for j in range(ncols):
         axs[-1, j].set_xlabel(r'$V_g$ in mV')
     #plt.tight_layout()
     plt.show()
+
+
+def look_at_exp():
+    dataloader = DataLoader(exp_dataset, batch_size=1, shuffle=False)
+    infos = exp_dataset.info
+    for diagram, label, index in dataloader:
+        diagram = diagram[0, 0]
+        label = label[0]
+        info = infos[index[0]]
+        Vg = info['Vg_range']
+        Vds = info['Vds_range']
+        plt.title('Ec: %s meV' % '{:2f}'.format(float(info['Ec'])))
+        plt.imshow(diagram, aspect=1, cmap='hot', extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]])
+        plt.show()
 
 
 # ==================== TRAINING AND TESTING ====================
@@ -359,58 +421,153 @@ def analise_network(model_name, datatype='valid'):
     Ec = []
     n_levels = []
     T = []
+    Vds_res = []
+    Vg_res = []
+    square_res = []
+    for k in range(3):
+        with torch.no_grad():
+            for X, y, index in dataloader:
+                info = infos[index]
+                X = X.to(device)
+                y = y.to(device)
+                pred = model(X)
+                error.append(abs(float((pred - y)/y))*100.0)  # error in %
+                loss.append(loss_fn(pred, y).item())
+                alpha.append(info['ag'])
+                Ec.append(info['Ec'])
+                n_levels.append(len(info['levels']))
+                T.append(info['T'])
+                Vds_res.append(float(y))
+                Vg_res.append(float(y/info['ag']))
+                square_res.append(float(y**2 + (y/info['ag'])**2))
+                if loss[-1] > 999999:
+                    X = X.to('cpu')
+                    X = X.numpy()[0, 0]
+                    plt.imshow(np.abs(X), aspect=1, cmap='hot')
+                    plt.show()
+    loss = np.array(loss)
+    error = np.array(error)
+    alpha = np.array(alpha)
+    Ec = np.array(Ec)
+    n_levels = np.array(n_levels)
+    Vg_res = np.array(Vg_res)
+    Vds_res = np.array(Vds_res)
+    square_res = np.array(square_res)
+
+    figAlpha, ax = plt.subplots()
+    plt.title('epoch = %s' % epoch)
+    plt.plot(error, alpha, 'ok', ms=1)
+    plt.xlabel("relative Ec error in %")
+    plt.ylabel("alpha")
+
+    figEc, ax = plt.subplots()
+    plt.title('epoch = %s' % epoch)
+    plt.plot(error, Ec, 'ok', ms=1)
+    plt.xlabel("relative Ec error in %")
+    plt.ylabel("Ec (meV)")
+
+    figLv, ax = plt.subplots()
+    plt.title('epoch = %s' % epoch)
+    plt.plot(error, n_levels, 'ok', ms=1)
+    plt.xlabel("relative Ec error in %")
+    plt.ylabel("number of energy levels")
+
+    figT, ax = plt.subplots()
+    plt.title('epoch = %s' % epoch)
+    plt.plot(error, T, 'ok', ms=1)
+    plt.xlabel("relative Ec error in %")
+    plt.ylabel("Temperature (K)")
+
+    figVds_res, ax = plt.subplots()
+    plt.title('epoch = %s' % epoch)
+    plt.plot(error, Vds_res, 'ok', ms=1)
+    plt.xlabel("relative Ec error in %")
+    plt.ylabel("Vds number of pixel per height")
+
+    figVg_res, ax = plt.subplots()
+    plt.title('epoch = %s' % epoch)
+    plt.plot(error, Vg_res, 'ok', ms=1)
+    plt.xlabel("relative Ec error in %")
+    plt.ylabel("Vg number of pixel per width")
+
+    figSquare_res, ax = plt.subplots()
+    plt.title('epoch = %s' % epoch)
+    plt.plot(error, square_res, 'ok', ms=1)
+    plt.xlabel("relative Ec error in %")
+    plt.ylabel("square sum of pixels per diamonds")
+
+    wandb.log({"alpha fig": figAlpha,
+               "Ec fig": figEc,
+               "n level fig": figLv,
+               "T fig": figT,
+               "Vds_res_fig": figVds_res,
+               "Vg_res_fig": figVg_res,
+               "square_res_fig": figSquare_res,})
+    return loss, alpha
+
+
+def test_on_exp(model_name):
+    dataloader = DataLoader(exp_dataset, batch_size=1, shuffle=False)
+    infos = exp_dataset.info
+    # lookAtData(dataloader, dataloader.info, 5, 5)
+    loss_fn = nn.MSELoss()
+    run, model, epoch, configs = load_model(model_name, branch_training=False, train=True)
+    error = []
+    loss = []
+    Ec_error = []
+    Ec = []
+    Ec_guess = []
+    ys = []
+    preds = []
     with torch.no_grad():
         for X, y, index in dataloader:
             info = infos[index]
             X = X.to(device)
             y = y.to(device)
             pred = model(X)
-            error.append(abs(float(pred - info['Ec'])))
+            ys.append(float(y))
+            preds.append(float(pred))
+            error.append(abs(float((pred - y)/y))*100.0)  # error in %
             loss.append(loss_fn(pred, y).item())
-            alpha.append(info['ag'])
             Ec.append(info['Ec'])
-            n_levels.append(len(info['levels']))
-            T.append(info['T'])
-            if loss[-1] > 999999:
-                X = X.to('cpu')
-                X = X.numpy()[0, 0]
-                plt.imshow(np.abs(X), aspect=1, cmap='hot')
-                plt.show()
+            Ec_error.append(error[-1]*info['Ec']/100)
+            temp = float(info['Ec']*pred/y)
+            Ec_guess.append(temp)
     loss = np.array(loss)
     error = np.array(error)
-    alpha = np.array(alpha)
+    Ec_error = np.array(Ec_error)
     Ec = np.array(Ec)
-    n_levels = np.array(n_levels)
+    Ec_guess = np.array(Ec_guess)
 
-    figAlpha, ax = plt.subplots()
+    figExp_perc, ax = plt.subplots()
     plt.title('epoch = %s' % epoch)
-    plt.plot(error, alpha, 'ok', ms=1)
-    plt.xlabel("Ec error in meV")
-    plt.ylabel("alpha")
+    plt.plot(Ec, error, 'ok', ms=1)
+    plt.xlabel("Ec value in mV")
+    plt.ylabel("relative Ec error in %")
 
-    figEc, ax = plt.subplots()
+    figExp_abs, ax = plt.subplots()
     plt.title('epoch = %s' % epoch)
-    plt.plot(error, Ec, 'ok', ms=1)
-    plt.xlabel("Ec error in meV")
-    plt.ylabel("Ec (meV)")
+    plt.plot(Ec, Ec_error, 'ok', ms=1)
+    plt.xlabel("Ec value in mV")
+    plt.ylabel("Ec error in mV")
 
-    figLv, ax = plt.subplots()
+    figExp_guess, ax = plt.subplots()
     plt.title('epoch = %s' % epoch)
-    plt.plot(error, n_levels, 'ok', ms=1)
-    plt.xlabel("Ec error in meV")
-    plt.ylabel("number of energy levels")
+    plt.plot(Ec, Ec_guess, 'ok', ms=1)
+    plt.xlabel("Ec value in mV")
+    plt.ylabel("Ec guess in mV")
 
-    figT, ax = plt.subplots()
+    figExp_raw_y, ax = plt.subplots()
     plt.title('epoch = %s' % epoch)
-    plt.plot(error, T, 'ok', ms=1)
-    plt.xlabel("Ec error in meV")
-    plt.ylabel("Temperature (K)")
+    plt.plot(ys, preds, 'ok', ms=1)
+    plt.xlabel("wanted height in pixels")
+    plt.ylabel("height prediction in pixels")
 
-    wandb.log({"alpha fig": figAlpha,
-               "Ec fig": figEc,
-               "n level fig": figLv,
-               "T fig": figT,})
-    return loss, alpha
+    wandb.log({"exp_perc": figExp_perc,
+               "exp_abs": figExp_abs,
+               "exp_guess": figExp_guess,
+               "exp_raw_y": figExp_raw_y})
+    return
 
 
 def train():
@@ -422,7 +579,7 @@ def train():
     BATCH_SIZE = 1
     configs = {
         "learning_rate": 1E-3,
-        "epochs": 10,
+        "epochs": 3,
         "batch_size": BATCH_SIZE,
         "architecture": "ResNet50",  # modified when loaded
         "pretrained": True,  # modified when loaded
@@ -475,10 +632,11 @@ def train():
 def main():
     img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
                       for key in img_datasets}
-    for i in range(5):
-        lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
-    #train()
-    #analise_network("iconic-capybara", 'valid')
+    lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
+    # train()
+    # analise_network("fresh-blaze", 'valid')
+    # look_at_exp()
+    # test_on_exp("fresh-blaze")
 
 
 if __name__ == '__main__':
