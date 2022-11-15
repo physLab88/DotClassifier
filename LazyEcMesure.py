@@ -638,9 +638,9 @@ def main():
     #                   for key in img_datasets}
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
     train()
-    # analise_network("fresh-blaze", 'valid')
+    # analise_network("earthy-tree", 'valid')
     # look_at_exp()
-    # test_on_exp("fresh-blaze")
+    # test_on_exp("earthy-tree")
 
 
 if __name__ == '__main__':

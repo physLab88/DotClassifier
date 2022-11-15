@@ -34,13 +34,16 @@ def gaussian_blur(sample, target_info, min, max):
     sig_Vds = (random() * (max-min) + min)/Vds_res  # in y
     return gaussian_filter(sample, [sig_Vds, sig_Vg])
 
+
 def random_crop(sample, target_info):
     MIN_SIZE = 33
     box = target_info['box']
-    temp = randint(0, box[1][1] - 4)
+    # temp = randint(0, box[1][1] - 4)
+    temp = randint(0, box[1][1] - int((box[1][1] - box[0][1])*0.5*0.35))  # replace this with beta??
+    # temp = beta.rvs(1.2, 1.2, 0, )
     newBox = [[randint(box[0][0] + 4, target_info['nVg']), target_info['nVds'] - temp],
-              [randint(0, box[1][0]), temp],  # uper left corner
-              ]  # lower right
+              [randint(0, box[1][0]), temp],
+              ]
 
     temp = newBox[0][0] - newBox[1][0]
     if temp < MIN_SIZE:
