@@ -66,7 +66,7 @@ class StabilityDataset(Dataset):
 
         # gaussian blur
         # TODO add gaussian blur Ec/blur ratio limit
-        # sample = di.gaussian_blur(sample, target_info, 1.0, 5.0)
+        sample = di.gaussian_blur(sample, target_info, 1.0, 5.0)
         # thershold current
         sample = di.threshold_current(sample, target_info)
 
@@ -346,6 +346,7 @@ def load_model(model_name, configs=None, branch_training=True, tags=None, train=
     if not branch_training:
         ID = model_file_id[model_file_id.find('_') + 1:]
         print('ID %s' % ID)
+    else:
         configs['parent_run'] = model_name
 
     run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
@@ -582,13 +583,13 @@ def train():
     BATCH_SIZE = 1
     configs = {
         "learning_rate": 1E-3,
-        "epochs": 3,
+        "epochs": 25,
         "batch_size": BATCH_SIZE,
         "architecture": "ResNet50",  # modified when loaded
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
         "optimiser": "SGD",
-        "data_used": "first 2.0 log",
+        "data_used": "first 2.0 log n blur",
         "data_size": len(img_datasets['train']),
         "valid_size": len(img_datasets['valid']),
         "running_stats": False,
@@ -636,8 +637,8 @@ def main():
     # img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
     #                   for key in img_datasets}
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
-    # train()
-    analise_network("fresh-blaze", 'valid')
+    train()
+    # analise_network("fresh-blaze", 'valid')
     # look_at_exp()
     # test_on_exp("fresh-blaze")
 
