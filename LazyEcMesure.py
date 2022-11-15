@@ -65,7 +65,8 @@ class StabilityDataset(Dataset):
         target = target / ((target_info["Vds_range"][1] - target_info["Vds_range"][0])/(target_info["nVds"]-1))
 
         # gaussian blur
-        sample = di.gaussian_blur(sample, target_info, 1.0, 1.0)
+        # TODO add gaussian blur Ec/blur ratio limit
+        # sample = di.gaussian_blur(sample, target_info, 1.0, 5.0)
         # thershold current
         sample = di.threshold_current(sample, target_info)
 
@@ -145,11 +146,13 @@ class RandomMultiply(object):
 data_transforms = {'train': transforms.Compose([
     # RandomMultiply(0.7, 1.3),
     transforms.ToTensor(),
+    transforms.RandomVerticalFlip(),
     # transforms.RandomAffine(degrees=0, translate=(0, 0.025)),
     ]),
                    'valid': transforms.Compose([
     # RandomMultiply(0.7, 1.3),
     transforms.ToTensor(),
+    transforms.RandomVerticalFlip(),
     # transforms.RandomAffine(degrees=0, translate=(0.1, 0.025)),
     ]),
 }
@@ -630,11 +633,11 @@ def train():
 
 # ============================ MAIN ============================
 def main():
-    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
-                      for key in img_datasets}
-    lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
+    # img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
+    #                   for key in img_datasets}
+    # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
     # train()
-    # analise_network("fresh-blaze", 'valid')
+    analise_network("fresh-blaze", 'valid')
     # look_at_exp()
     # test_on_exp("fresh-blaze")
 
