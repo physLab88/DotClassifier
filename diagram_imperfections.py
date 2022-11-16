@@ -39,9 +39,10 @@ def random_crop(sample, target_info):
     MIN_SIZE = 33
     box = target_info['box']
     # the floor() term in next line is for when we want to crop into the diamond
-    Vds_empty_space = randint(0, box[1][1] + floor((box[0][1] - box[1][1])/2 * 0.35))  # replace this with beta dist??
+    temp = box[1][1] + floor((box[0][1] - box[1][1])/2 * 0.35)
+    Vds_empty_space = int(beta.rvs(1.2, 0.80, 0, temp))
     # print(str(box[0][0] + 4) + '    ' + str(target_info['nVg']) + '    ' + str(Vds_empty_space) + '    ' + str(box[1][0]))
-    newBox = [[randint(min([box[0][0] + 4, target_info['nVg']]), target_info['nVg']), target_info['nVds'] - Vds_empty_space],
+    newBox = [[randint(min([box[0][0]+4, target_info['nVg']-1]), target_info['nVg']), target_info['nVds'] - Vds_empty_space],
               [randint(0, box[1][0]), Vds_empty_space],
               ]
 
@@ -153,7 +154,7 @@ def calc_pente(coords):
 
 # ============================ MAIN ==============================
 def main():
-    pltBeta(1.5, 1.5, 2.5, 1.5)
+    pltBeta(1.2, 0.8, 0, 1)
     for coords in I_slope_coords:
         print(calc_pente(coords))
     Vg = np.linspace(0, 100, 100)
