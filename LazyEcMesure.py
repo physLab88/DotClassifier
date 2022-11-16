@@ -25,7 +25,7 @@ PROJECT = 'LazyEcMesure'
 ENTITY = "3it_dot_classifier"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
-DIRECTORY = "data/sim2_0/"
+DIRECTORY = "data/sim3_0/"
 EXP_DIRECTORY = "data/exp_w_labels/"
 BATCH_SIZE = 1
 RANDOM_CROP = True
@@ -66,7 +66,7 @@ class StabilityDataset(Dataset):
 
         # gaussian blur
         # TODO add gaussian blur Ec/blur ratio limit
-        sample = di.gaussian_blur(sample, target_info, 1.0, 5.0)
+        # sample = di.gaussian_blur(sample, target_info, 1.0, 5.0)
         # thershold current
         sample = di.threshold_current(sample, target_info)
 
@@ -171,7 +171,7 @@ exp_dataset = ExperimentalDataset(root_dir=EXP_DIRECTORY, transform=exp_transfor
 
 
 def lookAtData(dataloader, info, nrows=1, ncols=1):
-    fig, axs = plt.subplots(nrows, ncols)# , sharex=True, sharey=True)
+    fig, axs = plt.subplots(nrows, ncols)  # sharex=True, sharey=True)
     info = info[0]
     Vg = info['Vg_range']
     Vds = info['Vds_range']
@@ -190,7 +190,7 @@ def lookAtData(dataloader, info, nrows=1, ncols=1):
             # print(np.log(Imin))
             # diagram = di.clip_current(diagram, Imin)
 
-            plt.title('Ec: %s meV' % '{:2f}'.format(float(labels[index])))
+            plt.title('Pix_height: %s' % '{:2f}'.format(float(labels[index])))
             plt.imshow(diagram, aspect=1, cmap='hot')  # extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]]
             # plt.xlim([0, 290])
     for j in range(ncols):
@@ -208,7 +208,7 @@ def look_at_exp():
         info = infos[index[0]]
         Vg = info['Vg_range']
         Vds = info['Vds_range']
-        plt.title('Ec: %s meV' % '{:2f}'.format(float(info['Ec'])))
+        plt.title('Ec: %s meV  pixel height %s' % ('{:2f}'.format(float(info['Ec'])), '{:2f}'.format(float(label))))
         plt.imshow(diagram, aspect=1, cmap='hot', extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]])
         plt.show()
 
@@ -529,6 +529,7 @@ def test_on_exp(model_name):
             X = X.to(device)
             y = y.to(device)
             pred = model(X)
+            pred *= 2   # WARNING This was added just to fit with my results. I don't know if this is good yet
             ys.append(float(y))
             preds.append(float(pred))
             error.append(abs(float((pred - y)/y))*100.0)  # error in %
@@ -583,13 +584,13 @@ def train():
     BATCH_SIZE = 1
     configs = {
         "learning_rate": 1E-3,
-        "epochs": 25,
+        "epochs": 50,
         "batch_size": BATCH_SIZE,
         "architecture": "ResNet50",  # modified when loaded
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
         "optimiser": "SGD",
-        "data_used": "first 2.0 log n blur",
+        "data_used": "first 3.0 log n blur, crop_into",
         "data_size": len(img_datasets['train']),
         "valid_size": len(img_datasets['valid']),
         "running_stats": False,
@@ -634,13 +635,14 @@ def train():
 
 # ============================ MAIN ============================
 def main():
-    # img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
-    #                   for key in img_datasets}
-    # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
-    train()
-    # analise_network("earthy-tree", 'valid')
+    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
+                      for key in img_datasets}
+    for i in range(10):
+        lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
+    # train()
+    # analise_network("graceful-disco", 'valid')
     # look_at_exp()
-    # test_on_exp("earthy-tree")
+    # test_on_exp("graceful-disco")
 
 
 if __name__ == '__main__':
