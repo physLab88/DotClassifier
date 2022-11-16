@@ -6,7 +6,7 @@ import yaml
 import os
 
 
-root_dir = "data/sim3_0/valid/"
+root_dir = "data/sim3_0/train/"
 
 
 def verify_if_files_attached(delete_unattached=False):
@@ -14,7 +14,7 @@ def verify_if_files_attached(delete_unattached=False):
     if you stoped the generating program prematurely"""
     f = open(root_dir + '_data_indexer.yaml', 'r')
     infos = yaml.load(f, Loader=yaml.FullLoader)
-    # infos.pop(143)
+    infos.pop(143)
     fail=0
     failed_index = []
     for info, index in zip(infos, range(len(infos))):
@@ -27,6 +27,7 @@ def verify_if_files_attached(delete_unattached=False):
             failed_index.append(index)
     print(fail)
     print(failed_index)
+    print(len(infos))
     if fail == 0 and delete_unattached:
         f = open(root_dir + '_data_indexer.yaml', 'w')
         yaml.dump(infos, f)
@@ -40,9 +41,11 @@ def verify_min_img_size(min_size=35, del_too_small=False):
     """
     f = open(root_dir + '_data_indexer.yaml', 'r')
     infos = yaml.load(f, Loader=yaml.FullLoader)
+    print(len(infos))
     fail=0
     failed_index = []
     for info, index in zip(infos, range(len(infos))):
+        print(index)
         if info["nVds"] <= min_size or info['nVg'] <= min_size:
             fail += 1
             failed_index.append(index)
@@ -54,7 +57,6 @@ def verify_min_img_size(min_size=35, del_too_small=False):
         files_to_delete = []
         for index in failed_index[::-1]:
             info = infos.pop(index)
-            # os.remove(root_dir + info['f'] + '.npy')
             sample_name = root_dir + info['f'] + '.npy'
             files_to_delete.append(sample_name)
 
@@ -70,12 +72,13 @@ def verify_min_img_size(min_size=35, del_too_small=False):
         if fail == 0:
             for file in files_to_delete:
                 os.remove(file)
-                f = open(root_dir + '_data_indexer.yaml', 'w')
-                yaml.dump(infos, f)
+            f = open(root_dir + '_data_indexer.yaml', 'w')
+            yaml.dump(infos, f)
     return
 
 
 def main():
+    # verify_if_files_attached(delete_unattached=False)
     verify_min_img_size(del_too_small=False)
 
 
