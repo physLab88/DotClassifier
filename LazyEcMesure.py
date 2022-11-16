@@ -185,7 +185,7 @@ def lookAtData(dataloader, info, nrows=1, ncols=1):
 
             diagram = diagrams[index][0]
             size = diagram.size()
-            print(size)
+            # print(size)
             # Imin = diagram[:floor(size[0]/2)-2, :].min()
             # print(np.log(Imin))
             # diagram = di.clip_current(diagram, Imin)

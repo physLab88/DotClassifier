@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from scipy.stats import beta
-from math import ceil
+from math import ceil, floor
 from numpy.random import randint, random
 from scipy.ndimage import gaussian_filter
 
@@ -38,13 +38,14 @@ def gaussian_blur(sample, target_info, min, max):
 def random_crop(sample, target_info):
     MIN_SIZE = 33
     box = target_info['box']
-    # temp = randint(0, box[1][1] - 4)
-    temp = randint(0, box[1][1] - int((box[1][1] - box[0][1])*0.5*0.35))  # replace this with beta??
-    # temp = beta.rvs(1.2, 1.2, 0, )
-    newBox = [[randint(box[0][0] + 4, target_info['nVg']), target_info['nVds'] - temp],
-              [randint(0, box[1][0]), temp],
+    # the floor() term in next line is for when we want to crop into the diamond
+    Vds_empty_space = randint(0, box[1][1] + floor((box[0][1] - box[1][1])/2 * 0.35))  # replace this with beta dist??
+    # print(str(box[0][0] + 4) + '    ' + str(target_info['nVg']) + '    ' + str(Vds_empty_space) + '    ' + str(box[1][0]))
+    newBox = [[randint(min([box[0][0] + 4, target_info['nVg']]), target_info['nVg']), target_info['nVds'] - Vds_empty_space],
+              [randint(0, box[1][0]), Vds_empty_space],
               ]
 
+    # making surer the box satisfies a min size
     temp = newBox[0][0] - newBox[1][0]
     if temp < MIN_SIZE:
         temp = ceil((MIN_SIZE - temp) / 2)
