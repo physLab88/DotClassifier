@@ -6,7 +6,7 @@ import yaml
 import os
 
 
-root_dir = "data/sim3_0/train/"
+root_dir = "data/sim3_0/valid/"
 
 
 def verify_if_files_attached(delete_unattached=False):

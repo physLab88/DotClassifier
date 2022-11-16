@@ -6,7 +6,10 @@ from math import ceil, floor
 from numpy.random import randint, random
 from scipy.ndimage import gaussian_filter
 
+
 # ===================== DECLARING CONSTANTS ======================
+
+
 
 def pltBeta(a, b, loc=0.0, scale=1.0):
     ''' this function allows you to visualise a distribution function
@@ -127,6 +130,8 @@ def calc_threshold_current(Vg, Vds, Vsat_range):
     # cbar = plt.colorbar(label='current in ??????')
     # plt.show()
     return I
+
+
 
 
 I_rise_coords = [
