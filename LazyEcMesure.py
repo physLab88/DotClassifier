@@ -26,9 +26,12 @@ ENTITY = "3it_dot_classifier"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
 DIRECTORY = "data/sim3_0/"
-EXP_DIRECTORY = "data/exp_w_labels/"
+EXP_DIRECTORY = "data/exp_croped/"
 BATCH_SIZE = 1
 RANDOM_CROP = True
+
+exp_dataloader = None
+img_dataloaders = None
 
 
 # ======================= SETTING UP DATASET ========================
@@ -65,10 +68,12 @@ class StabilityDataset(Dataset):
         target = target / ((target_info["Vds_range"][1] - target_info["Vds_range"][0])/(target_info["nVds"]-1))
 
         # gaussian blur
-        # TODO add gaussian blur Ec/blur ratio limit
         sample = di.gaussian_blur(sample, target_info, 1.0, 5.0)
-        # thershold current
+        # threshold current
         sample = di.threshold_current(sample, target_info)
+        # random current modulation
+        sample = di.rand_current_addition(sample, target_info, beta.rvs(0.8, 4, 1E-3, 0.07))
+        sample = di.rand_current_modulation(sample, target_info, 0.5)
 
         # random crop:
         newBox = []
@@ -76,7 +81,11 @@ class StabilityDataset(Dataset):
             sample, newBox = di.random_crop(sample, target_info)
         newBox = torch.IntTensor(newBox)
 
+        # scaling
         sample = di.random_multiply(sample, np.exp(beta.rvs(2.8, 3.7, -28, 8.5)))
+        # white noise
+        sample = di.white_noise(sample, np.exp(beta.rvs(0.85, 1.5, -29.5, 2)))
+        # clip
         sample = di.clip_current(sample, 2E-14, 1E-7)
 
         sample = np.log(np.abs(sample))
@@ -233,19 +242,21 @@ def test_loop(dataloader, model, loss_fn):
     # TODO implement std?
     test_loss /= num_batches*3
     print(f"Avg loss: {test_loss:>8f} \n")
-    return correct, test_loss
+    return test_loss
 
 
 def train_loop(dataloader, model, loss_fn, optimizer):
     size = len(dataloader.dataset)
     i=0
     cron.start('train_print')
+    running_loss = 0
     for batch, (X, y, index) in enumerate(dataloader):
         X = X.to(device)
         y = y.to(device)
         # Compute prediction and loss
         pred = model(X)
         loss = loss_fn(pred, y)
+        running_loss += loss.item()
 
         # Backpropagation
         optimizer.zero_grad()
@@ -255,14 +266,15 @@ def train_loop(dataloader, model, loss_fn, optimizer):
 
         if cron.t('train_print') >= 5.0:
             cron.start('train_print')
-            loss, current = loss.item(), batch * len(X)
+            current = batch * len(X)
             temp = current/size
             bar = '[' + int(temp*30)*'#' + int((1-temp)*30)*'-' + ']'
-            print("loss: {loss:.5f}  {bar:>} {perc:.2%}".format(loss=loss, bar=bar, perc=temp))
+            print("loss: {loss:.5f}  {bar:>} {perc:.2%}".format(loss=running_loss/current, bar=bar, perc=temp))
     cron.stop('train_print')
+    return running_loss / size
 
 
-def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_dataloader, numEpoch, init_epoch=1):
+def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_dataloader, numEpoch, init_epoch=1, exp_dataloader=None):
     # TODO initial assestement
     # TODO continue run / checkpoint ???
     best = None
@@ -270,10 +282,14 @@ def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_data
     # ------------->>> training loop
     for E in range(numEpoch):
         print("Starting Epoch %s \n ========================================" % (E+1))
-        train_loop(train_dataloader, model, loss_fn, optimizer)
-        accu, loss = test_loop(test_dataloader, model, loss_fn)
-
-        wandb.log({"loss": loss, "accuracy": accu, "epoch": E + init_epoch})
+        train_loss = train_loop(train_dataloader, model, loss_fn, optimizer)
+        loss = test_loop(test_dataloader, model, loss_fn)
+        log_dic = {"loss": loss, "train loss": train_loss, "epoch": E + init_epoch}
+        exp_loss = None
+        if exp_dataloader is not None:
+            exp_loss = test_loop(exp_dataloader, model, loss_fn)
+            log_dic["exp loss"] = exp_loss
+        wandb.log(log_dic)
         wandb.config.update({"epochs": E + init_epoch}, allow_val_change=True)
         # ------------>>> make a checkpoint
         # ---> save report
@@ -283,7 +299,9 @@ def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_data
             best = loss
             best_summary["epoch"] = E + init_epoch
             best_summary["loss"] = loss
-            best_summary["accuracy"] = accu
+            best_summary["train loss"] = train_loss
+            if exp_dataloader is not None:
+                best_summary["exp loss"] = exp_loss
 
             model_scripted = torch.jit.script(model)  # Export to TorchScript
             model_scripted.save(NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')  # Save
@@ -355,6 +373,20 @@ def load_model(model_name, configs=None, branch_training=True, tags=None, train=
     if branch_training:
         wandb.log({"loss": summary['loss'], "accuracy": summary['accuracy'], "epoch": init_epoch})
     return run, model, init_epoch + 1, configs
+
+
+def get_input_stats(dataloader, multiplot=False, title=''):
+    means = []
+    stds = []
+    for i in range(3):
+        for X, y, index in dataloader:
+            means.append(X.mean())
+            stds.append(X.std())
+    plt.hist(stds)
+    plt.title(title)
+    if not multiplot:
+        plt.show()
+    return
 
 
 # =================== CREATING A CUSTOM MODEL ==================
@@ -447,7 +479,7 @@ def analise_network(model_name, datatype='valid'):
                 if loss[-1] > 999999:
                     X = X.to('cpu')
                     X = X.numpy()[0, 0]
-                    plt.imshow(np.abs(X), aspect=1, cmap='hot')
+                    plt.imshow(X, aspect=1, cmap='hot')
                     plt.show()
     loss = np.array(loss)
     error = np.array(error)
@@ -529,7 +561,7 @@ def test_on_exp(model_name):
             X = X.to(device)
             y = y.to(device)
             pred = model(X)
-            pred *= 2   # WARNING This was added just to fit with my results. I don't know if this is good yet
+            # pred *= 2   # WARNING This was added just to fit with my results. I don't know if this is good yet
             ys.append(float(y))
             preds.append(float(pred))
             error.append(abs(float((pred - y)/y))*100.0)  # error in %
@@ -580,19 +612,20 @@ def train():
     # TODO randomise weights
     # TODO implement parent run everywhere
 
-    global ID, RUN_NAME, BATCH_SIZE
+    global ID, RUN_NAME, BATCH_SIZE, img_dataloaders, exp_dataloader
     BATCH_SIZE = 1
     configs = {
         "learning_rate": 1E-3,
-        "epochs": 50,
+        "epochs": 30,
         "batch_size": BATCH_SIZE,
         "architecture": "ResNet50",  # modified when loaded
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
         "optimiser": "SGD",
-        "data_used": "first 3.0 log n blur, crop_into",
-        "data_size": len(img_datasets['train']),
-        "valid_size": len(img_datasets['valid']),
+        "data_used": "first 3.0 curr_module_1",
+        "data_size": len(img_dataloaders['train'].dataset),
+        "valid_size": len(img_dataloaders['valid'].dataset),
+        "exp_data_size": len(exp_dataloader.dataset),
         "running_stats": False,
     }
     tags = ['resnet50']
@@ -630,19 +663,25 @@ def train():
     # ----------------->>> training the network
     RUN_NAME = run.name
     basicTrainingSequence(model, loss_fn, optimizer, img_dataloaders['train'],
-                          img_dataloaders['valid'], configs['epochs'], init_epoch=init_epoch)
+                          img_dataloaders['valid'], configs['epochs'], init_epoch=init_epoch,
+                          exp_dataloader=exp_dataloader)
 
 
 # ============================ MAIN ============================
 def main():
-    # img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
-    #                   for key in img_datasets}
+    global exp_dataloader, img_dataloaders
+    exp_dataloader = DataLoader(exp_dataset, batch_size=1, shuffle=False)
+    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
+                      for key in img_datasets}
+    # get_input_stats(img_dataloaders['valid'], title='valid mean')
+    # get_input_stats(exp_dataloader,  title='exp mean')
+
     # for i in range(10):
-    #     lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
-    train()
-    # analise_network("graceful-disco", 'valid')
+    # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
     # look_at_exp()
-    # test_on_exp("graceful-disco")
+    train()
+    # analise_network("smart-wave", 'valid')
+    # test_on_exp("smart-wave")
 
 
 if __name__ == '__main__':

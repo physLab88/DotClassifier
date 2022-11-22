@@ -8,7 +8,17 @@ from scipy.ndimage import gaussian_filter
 
 
 # ===================== DECLARING CONSTANTS ======================
+DARK_THICKNESS = 20
 
+
+def white_noise(sample, noise_scale):
+    noise = np.random.normal(size=sample.shape)
+    return sample + noise*noise_scale
+
+
+def add_in_dark_current(sample):
+    zeros = np.zeros([sample.shape[0], DARK_THICKNESS])
+    return np.concatenate([zeros, sample], axis=1)
 
 
 def pltBeta(a, b, loc=0.0, scale=1.0):
@@ -36,6 +46,65 @@ def gaussian_blur(sample, target_info, min, max):
     sig_Vg = (random() * (max - min) + min)/Vg_res  # in x
     sig_Vds = (random() * (max-min) + min)/Vds_res  # in y
     return gaussian_filter(sample, [sig_Vds, sig_Vg])
+
+
+def rand_current_modulation(sample, target_info, scale):
+    std_dist = lambda: beta.rvs(1, 1, 5, 70)
+    amplitude_dist = lambda: beta.rvs(1.4, 1.4, -1, 2)
+    x_width = target_info['Vg_range'][1] - target_info['Vg_range'][0]
+    y_width = target_info['Vds_range'][1] - target_info['Vds_range'][0]
+    area = x_width * y_width
+    x_pos = np.linspace(0, x_width, target_info['nVg'])
+    y_pos = np.linspace(0, y_width, target_info['nVds'])
+
+    x_mean_dist = lambda: beta.rvs(1, 1, -x_width/2, 2*x_width)
+    y_mean_dist = lambda: beta.rvs(1, 1, -y_width/2, 2*y_width)
+    num_gausse = randint(floor(area/(50*50)), ceil(area/(20*20)))
+    modulation = np.zeros(sample.shape)
+    for i in range(num_gausse):
+        means = [x_mean_dist(), y_mean_dist()]
+        stds = [std_dist(), std_dist()]
+        modulation += amplitude_dist() * gaussian_blob(x_pos, y_pos, means, stds).T
+    # scaling the noise
+    min = modulation.min()
+    max = modulation.max()
+    if abs(min) > 1 or max > 1:
+        modulation /= np.max([abs(min), max])
+    modulation = scale*modulation + 1
+    return sample * modulation
+
+
+def rand_current_addition(sample, target_info, scale):
+    std_dist = lambda: beta.rvs(1, 1, 5, 130)
+    amplitude_dist = lambda: beta.rvs(1.4, 1.4, -1, 2)
+    x_width = target_info['Vg_range'][1] - target_info['Vg_range'][0]
+    y_width = target_info['Vds_range'][1] - target_info['Vds_range'][0]
+    area = x_width * y_width
+    x_pos = np.linspace(0, x_width, target_info['nVg'])
+    y_pos = np.linspace(0, y_width, target_info['nVds'])
+
+    x_mean_dist = lambda: beta.rvs(1, 1, -x_width/2, 2*x_width)
+    y_mean_dist = lambda: beta.rvs(1, 1, -y_width/2, 2*y_width)
+    num_gausse = randint(floor(area/(150*150)), ceil(area/(40*40)))
+    modulation = np.zeros(sample.shape)
+    for i in range(num_gausse):
+        means = [x_mean_dist(), y_mean_dist()]
+        stds = [std_dist(), std_dist()]
+        modulation += amplitude_dist() * gaussian_blob(x_pos, y_pos, means, stds).T
+    # scaling the noise
+    min = modulation.min()
+    max = modulation.max()
+    if abs(min) > 1 or max > 1:
+        modulation /= np.max([abs(min), max])
+    return sample + scale*modulation
+
+
+def gaussian_blob(x_pos, y_pos, means, stds):
+    gauss = lambda x, mean, std: np.exp(-(x - mean) ** 2 / (2 * std * std))
+    temp_x = gauss(x_pos, means[0], stds[0])
+    temp_y = gauss(y_pos, means[1], stds[1])
+    temp_x = np.repeat(temp_x[:, None], len(temp_y), axis=1)
+    return temp_x * temp_y
 
 
 def random_crop(sample, target_info):
@@ -159,13 +228,9 @@ def calc_pente(coords):
 
 # ============================ MAIN ==============================
 def main():
-    pltBeta(1.2, 0.8, 0, 1)
-    for coords in I_slope_coords:
-        print(calc_pente(coords))
-    Vg = np.linspace(0, 100, 100)
-    Vds = np.linspace(-15, 15, 100)
-    for i in range(30):
-        calc_threshold_current(Vg, Vds, [40, 70])
+    temp = gaussian_blob(np.arange(0, 10), np.arange(0, 20), [1, 5], [5, 7])
+    plt.imshow(temp)
+    plt.show()
     pass
 
 
