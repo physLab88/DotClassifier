@@ -79,6 +79,10 @@ class StabilityDataset(Dataset):
         newBox = []
         if RANDOM_CROP:
             sample, newBox = di.random_crop(sample, target_info)
+            # target /= newBox[1][1] - newBox[0][1]  # try it out normalised to height
+        else:
+            # target /= (target_info["nVds"] - 1)  # try it out normalised to height
+            pass
         newBox = torch.IntTensor(newBox)
 
         # scaling
@@ -89,7 +93,10 @@ class StabilityDataset(Dataset):
         sample = di.clip_current(sample, 2E-14, 1E-7)
 
         sample = np.log(np.abs(sample))
-        sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
+
+        indices = np.moveaxis(np.indices(sample.shape), 0, -1)
+        sample = np.concatenate([sample[:, :, None], indices], axis=2)
+        #sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
         sample = sample.astype('float32')
         if self.transform:
             sample = self.transform(sample)
@@ -129,11 +136,15 @@ class ExperimentalDataset(Dataset):
         target_info = self.info[idx]
         # here, we define the target Ec in Vds_pixels
         target = target / ((target_info["Vds_range"][1] - target_info["Vds_range"][0])/(target_info["nVds"]-1))
+        # target /= (target_info["nVds"] - 1)  # try it out normalised to height
 
         sample = di.clip_current(sample, 2E-14, 1E-7)
 
         sample = np.log(np.abs(sample))
-        sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
+
+        #sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
+        indices = np.moveaxis(np.indices(sample.shape), 0, -1)
+        sample = np.concatenate([sample[:, :, None], indices], axis=2)
         sample = sample.astype('float32')
         if self.transform:
             sample = self.transform(sample)
@@ -441,8 +452,6 @@ def sets_running_stats(node):
 
 # ======================== MAIN ROUTINES ========================
 def analise_network(model_name, datatype='valid'):
-    img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=1, shuffle=True)
-                       for key in img_datasets}
     dataloader = img_dataloaders[datatype]
     infos = img_datasets[datatype].info
     # lookAtData(dataloader, dataloader.info, 5, 5)
@@ -561,7 +570,6 @@ def test_on_exp(model_name):
             X = X.to(device)
             y = y.to(device)
             pred = model(X)
-            # pred *= 2   # WARNING This was added just to fit with my results. I don't know if this is good yet
             ys.append(float(y))
             preds.append(float(pred))
             error.append(abs(float((pred - y)/y))*100.0)  # error in %
@@ -622,7 +630,7 @@ def train():
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
         "optimiser": "SGD",
-        "data_used": "first 3.0 curr_module_1",
+        "data_used": "first 3.0 with indicies",
         "data_size": len(img_dataloaders['train'].dataset),
         "valid_size": len(img_dataloaders['valid'].dataset),
         "exp_data_size": len(exp_dataloader.dataset),
@@ -679,8 +687,8 @@ def main():
     # for i in range(10):
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
     # look_at_exp()
-    train()
-    # analise_network("smart-wave", 'valid')
+    # train()
+    analise_network("smart-wave", 'valid')
     # test_on_exp("smart-wave")
 
 

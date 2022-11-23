@@ -6,7 +6,7 @@ import yaml
 import os
 import matplotlib.pyplot as plt
 
-root_dir = "data/exp_croped/"
+root_dir = "data/sim3_0/valid/"
 
 
 def verify_if_files_attached(delete_unattached=False):
@@ -14,7 +14,7 @@ def verify_if_files_attached(delete_unattached=False):
     if you stoped the generating program prematurely"""
     f = open(root_dir + '_data_indexer.yaml', 'r')
     infos = yaml.load(f, Loader=yaml.FullLoader)
-    infos.pop(143)
+    # infos.pop(143)
     fail=0
     failed_index = []
     for info, index in zip(infos, range(len(infos))):
@@ -139,8 +139,8 @@ def crop_image():
 
 def main():
     # verify_if_files_attached(delete_unattached=False)
-    # verify_min_img_size(del_too_small=False)
-    crop_image()
+    verify_min_img_size(del_too_small=False)
+    # crop_image()
 
 
 if __name__ == '__main__':
