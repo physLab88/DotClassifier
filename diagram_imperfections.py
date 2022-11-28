@@ -5,10 +5,12 @@ from scipy.stats import beta
 from math import ceil, floor
 from numpy.random import randint, random
 from scipy.ndimage import gaussian_filter
-
+import opensimplex as simplex
+import yaml
 
 # ===================== DECLARING CONSTANTS ======================
 DARK_THICKNESS = 20
+
 
 
 def white_noise(sample, noise_scale):
@@ -147,7 +149,7 @@ def clip_current(sample, low=None, high=None):
     return sample
 
 
-def threshold_current(sample, target_info):
+def threshold_current2(sample, target_info):
     temp = target_info['Vg_range']
     Vg = np.linspace(temp[0], temp[1], target_info['nVg'])
     temp = target_info['Vds_range']
@@ -167,7 +169,7 @@ def threshold_current(sample, target_info):
     return sample + thresh_I
 
 
-def calc_threshold_current(Vg, Vds, Vsat_range):
+def calc_threshold_current2(Vg, Vds, Vsat_range):
     """ This function is responsible to immitate the transistor transiting
     into cunduction mode as we hit the Vg threshold voltage."""
     # TODO it is possible I_rise is underestimated du to electron temperature in the experimental data
@@ -201,6 +203,184 @@ def calc_threshold_current(Vg, Vds, Vsat_range):
     return I
 
 
+def threshold_current(sample, target_info):
+    Vmesh = create_Vmesh(sample, target_info)
+
+    # Creating a slope:
+    a = target_info['ag']
+    b = target_info['s_ratio']
+    up_slope = 1/(-a/(1-b*(1-a)))
+    up_slope = beta.rvs(2.5, 1.5, up_slope*1.2, abs(up_slope*1.2))
+    down_slope = 1/(a/(b*(1-a)))
+    down_slope = beta.rvs(1.5, 2.5, 0, abs(down_slope*1.2))
+    # print(up_slope)
+    # print(down_slope)
+    Vmesh = shift_slopes(Vmesh, up_slope, down_slope)
+
+    # defining the possible range of Vsat
+    diamond_width = target_info['Ec']/target_info['ag']
+    n_levels = np.array(target_info['degens']).sum()
+    MAX_LEVELS = 4
+    if n_levels > MAX_LEVELS:
+        n_levels = MAX_LEVELS
+
+    # next, vsat can start inside the first diamond or be at the \simeq end of the last diamond
+    Vsat_range = [diamond_width*(3/2), diamond_width*(1/2 + (n_levels - 1))]
+    thresh_I = calc_threshold_current(Vmesh, Vsat_range)
+    return sample + thresh_I
+
+
+def create_Vmesh(sample, target_info):
+    '''this function creates a voltage space mesh in mV. Vmesh[1] are Vg and Vmesh[0] are Vds'''
+    Vmesh = np.indices(sample.shape).astype('float32')
+    temp = target_info['Vg_range']
+    temp1 = target_info['nVg'] - 1
+    Vmesh[1] = Vmesh[1] * (temp[1] - temp[0]) / temp1 + temp[0]
+    temp = target_info['Vds_range']
+    temp1 = target_info['nVds'] - 1
+    Vmesh[0] = -(Vmesh[0] * (temp[1] - temp[0]) / temp1 + temp[0])
+    return Vmesh
+
+
+def shift_slopes(Vmesh, up_slope, down_slope):
+    '''this function shifts Vmesh along the directions of the diamond slopes'''
+    Vmesh[1][Vmesh[0]>0] = Vmesh[1][Vmesh[0]>0] - Vmesh[0][Vmesh[0]>0]*up_slope
+    Vmesh[1][Vmesh[0]<0] = Vmesh[1][Vmesh[0]<0] - Vmesh[0][Vmesh[0]<0]*down_slope
+    return Vmesh
+
+
+def calc_threshold_current(Vmesh, Vsat_range):
+    """ This function is responsible to immitate the transistor transiting
+    into cunduction mode as we hit the Vg threshold voltage."""
+    # TODO it is possible I_rise is underestimated du to electron temperature in the experimental data
+    Vsat_range = np.array(Vsat_range)
+    I_rise = beta.rvs(1.6, 5.5, 0.15, 0.85)
+    I_slope = beta.rvs(2.2, 3.0, 0.015, 0.085)
+    I_sat = beta.rvs(3.7, 2.2, -25, 8.5)
+    V_sat = beta.rvs(2.7, 1.5, loc=Vsat_range.min(), scale=np.abs(Vsat_range[1] - Vsat_range[0])) + (I_sat+30)/I_rise
+
+    I_mask = Vmesh[1] < V_sat
+
+    I = np.zeros(Vmesh[1].shape)
+    I[I_mask] = (Vmesh[1][I_mask] - V_sat) * I_rise + I_sat
+    I[I_mask == False] = (Vmesh[1][I_mask == False] - V_sat) * I_slope + I_sat
+
+    I = np.exp(I)
+    I = I*-Vmesh[0]  # here, we would need to multyply by -Vd, but simulator is eronous
+
+    # re-adjusting the scale of the current
+    I = I/np.exp(I_sat)
+    I = I*np.exp(beta.rvs(1.5, 1.5, 2.5, 1.5))
+
+    # I_dark = np.exp(-32)
+    # I[np.abs(I)<I_dark] = I_dark * np.sign(I[np.abs(I)<I_dark])
+    # I = np.log10(np.abs(I))
+    # # print(I)
+    # plt.title(V_sat)
+    # plt.imshow(I, cmap='hot')
+    # cbar = plt.colorbar(label='current in ??????')
+    # plt.show()
+    return I
+
+
+def calc_pente(coords):
+    return (coords[3] - coords[1])/(coords[2] - coords[0])
+
+
+FILEPATH = "data/sim3_0/train/"
+def load_index(index):
+    f = open(FILEPATH + '_data_indexer.yaml', 'r')
+    target_info = yaml.load(f, Loader=yaml.FullLoader)[index]
+    sample = np.load(FILEPATH + target_info['f'] + ".npy")
+    return sample, target_info
+
+
+# ========================= 3D MAPPING ==========================
+def sine_integral(freq, phase, direction, Vmesh):
+    X = np.dot(Vmesh, direction)
+    # print(X.shape)
+    temp = np.real(np.exp(1j *(phase + freq * 2*np.pi * X)))
+    temp += Vmesh[:, :, 0] * direction[0]
+    # temp += np.abs(X)
+    # print(direction[0])
+    # temp += X
+    # plt.imshow(X, cmap='binary')
+    # cbar = plt.colorbar(label='')
+    # plt.show()
+    return temp
+
+
+def low_freq_3DMAP(sample, target_info):
+    Vg = target_info['Vg_range']
+    Vd = target_info["Vds_range"]
+    # print(target_info['T'])
+    Vmesh = create_Vmesh(sample, target_info)
+    # I_scale = (random()*0.1)**2  # scale with harmonics
+    I_scale_func = lambda T: 8E-5 * T * T + 0.002216 * T + 0.002
+    I_scale = I_scale_func(target_info['T'])
+    Vmesh = np.concatenate([sample[None, :, :]*I_scale, Vmesh], axis=0)
+    Vmesh = np.moveaxis(Vmesh, 0, -1)
+    # print(Vmesh.shape)
+    harmonics = 10
+    new_sample = np.zeros(sample.shape)
+    for i in range(harmonics):
+        minF, maxF = 1/1600, 1/40
+        # converting those to octaves
+        minF, maxF = np.log2(minF), np.log2(maxF)
+        freq = 2**(random()*(maxF - minF) + minF)
+        # print(1/freq)
+        phase = random()*2*np.pi
+        temp = random()*2*np.pi
+        direction = np.array([random(), np.cos(temp), np.sin(temp)])
+        direction /= np.linalg.norm(direction)
+        amplitude = random()/freq/800
+        new_sample += amplitude*sine_integral(freq, phase, direction, Vmesh)
+
+    # new_sample = sample
+    # normalise
+    min_old, max_old = sample.min(), sample.max()
+    # print(min_old - max_old)
+    min_new, max_new = new_sample.min(), new_sample.max()
+    new_sample = (new_sample - min_new)/(max_new-min_new)
+    new_sample = new_sample*(max_old-min_old) + min_old
+    # plt.imshow(new_sample, extent=[Vg[0],Vg[-1],Vd[0],Vd[-1]], cmap='binary_r')
+    # cbar = plt.colorbar(label='')
+    # plt.show()
+    return new_sample
+
+
+# ============================ MAIN ==============================
+def main():
+    # pltBeta(2.5, 1.5)
+    print('starting')
+    shape = [100, 100]
+    target_info = {'Vg_range': [0, 100],
+                 'nVg': shape[1],
+                 'Vds_range': [-50, 50],
+                 'nVds': shape[0]}
+    sample = np.zeros(shape)
+    for j in range(15):
+        sample, target_info = load_index(randint(0, 5500))  # load_index(13)
+        sample = np.log(np.abs(clip_current(sample, 2E-14)))
+        # plt.imshow(sample)
+        # plt.show()
+        for i in range(3):
+            print('here')
+            low_freq_3DMAP(sample, target_info)
+
+
+    # Vmesh = create_Vmesh(np.zeros(shape), dummy_dic)
+    # Vmesh = shift_slopes(Vmesh, -0.5, 0.3)
+    # print(Vmesh)
+    # calc_threshold_current(Vmesh, [39, 40])
+
+    pass
+
+
+if __name__ == '__main__':
+    main()
+
+
 
 
 I_rise_coords = [
@@ -220,25 +400,6 @@ I_slope_coords = [
     [496, -16.1, 575, -14.3],
     [484, -18.5, 550, -14.9],
 ]
-
-
-def calc_pente(coords):
-    return (coords[3] - coords[1])/(coords[2] - coords[0])
-
-
-# ============================ MAIN ==============================
-def main():
-    temp = gaussian_blob(np.arange(0, 10), np.arange(0, 20), [1, 5], [5, 7])
-    plt.imshow(temp)
-    plt.show()
-    pass
-
-
-if __name__ == '__main__':
-    main()
-
-
-
 
 
 

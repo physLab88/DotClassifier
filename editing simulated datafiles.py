@@ -6,7 +6,7 @@ import yaml
 import os
 import matplotlib.pyplot as plt
 
-root_dir = "data/sim3_0/valid/"
+root_dir = "data/sim3_0/train/"
 
 
 def verify_if_files_attached(delete_unattached=False):

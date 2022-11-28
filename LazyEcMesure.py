@@ -26,7 +26,7 @@ ENTITY = "3it_dot_classifier"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
 DIRECTORY = "data/sim3_0/"
-EXP_DIRECTORY = "data/exp_croped/"
+EXP_DIRECTORY = "data/exp_w_labels/"
 BATCH_SIZE = 1
 RANDOM_CROP = True
 
@@ -67,13 +67,19 @@ class StabilityDataset(Dataset):
         # here, we define the target Ec in Vds_pixels
         target = target / ((target_info["Vds_range"][1] - target_info["Vds_range"][0])/(target_info["nVds"]-1))
 
-        # gaussian blur
-        sample = di.gaussian_blur(sample, target_info, 1.0, 5.0)
         # threshold current
         sample = di.threshold_current(sample, target_info)
+        # white noise
+        sample = di.white_noise(sample, np.exp(beta.rvs(0.85, 1.5, -29.5, 2)))
+        # 3D map
+        sample = np.log(np.abs(di.clip_current(sample, 2E-14)))
+        sample = di.low_freq_3DMAP(sample, target_info)
+        sample = np.exp(sample)
+        # gaussian blur
+        sample = di.gaussian_blur(sample, target_info, 0.0, 3.0)  # 1.0, 5.0)
         # random current modulation
-        sample = di.rand_current_addition(sample, target_info, beta.rvs(0.8, 4, 1E-3, 0.07))
-        sample = di.rand_current_modulation(sample, target_info, 0.5)
+        # sample = di.rand_current_addition(sample, target_info, beta.rvs(0.8, 4, 1E-3, 0.07))
+        # sample = di.rand_current_modulation(sample, target_info, 0.5)
 
         # random crop:
         newBox = []
@@ -81,22 +87,20 @@ class StabilityDataset(Dataset):
             sample, newBox = di.random_crop(sample, target_info)
             # target /= newBox[1][1] - newBox[0][1]  # try it out normalised to height
         else:
-            # target /= (target_info["nVds"] - 1)  # try it out normalised to height
             pass
+            # target /= (target_info["nVds"] - 1)  # try it out normalised to height
         newBox = torch.IntTensor(newBox)
 
         # scaling
         sample = di.random_multiply(sample, np.exp(beta.rvs(2.8, 3.7, -28, 8.5)))
-        # white noise
-        sample = di.white_noise(sample, np.exp(beta.rvs(0.85, 1.5, -29.5, 2)))
         # clip
         sample = di.clip_current(sample, 2E-14, 1E-7)
 
         sample = np.log(np.abs(sample))
 
-        indices = np.moveaxis(np.indices(sample.shape), 0, -1)
-        sample = np.concatenate([sample[:, :, None], indices], axis=2)
-        #sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
+        # indices = np.moveaxis(np.indices(sample.shape), 0, -1)
+        # sample = np.concatenate([sample[:, :, None], indices], axis=2)
+        sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
         sample = sample.astype('float32')
         if self.transform:
             sample = self.transform(sample)
@@ -142,9 +146,9 @@ class ExperimentalDataset(Dataset):
 
         sample = np.log(np.abs(sample))
 
-        #sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
-        indices = np.moveaxis(np.indices(sample.shape), 0, -1)
-        sample = np.concatenate([sample[:, :, None], indices], axis=2)
+        # indices = np.moveaxis(np.indices(sample.shape), 0, -1)
+        # sample = np.concatenate([sample[:, :, None], indices], axis=2)
+        sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
         sample = sample.astype('float32')
         if self.transform:
             sample = self.transform(sample)
@@ -277,7 +281,7 @@ def train_loop(dataloader, model, loss_fn, optimizer):
 
         if cron.t('train_print') >= 5.0:
             cron.start('train_print')
-            current = batch * len(X)
+            current = (batch+1) * len(X)
             temp = current/size
             bar = '[' + int(temp*30)*'#' + int((1-temp)*30)*'-' + ']'
             print("loss: {loss:.5f}  {bar:>} {perc:.2%}".format(loss=running_loss/current, bar=bar, perc=temp))
@@ -630,7 +634,7 @@ def train():
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
         "optimiser": "SGD",
-        "data_used": "first 3.0 with indicies",
+        "data_used": "3.0 3D_V1",
         "data_size": len(img_dataloaders['train'].dataset),
         "valid_size": len(img_dataloaders['valid'].dataset),
         "exp_data_size": len(exp_dataloader.dataset),
@@ -687,9 +691,9 @@ def main():
     # for i in range(10):
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 5, 5)
     # look_at_exp()
-    # train()
-    analise_network("smart-wave", 'valid')
-    # test_on_exp("smart-wave")
+    train()
+    # test_on_exp("eternal-feather")
+    # analise_network("smart-wave", 'valid')
 
 
 if __name__ == '__main__':

@@ -6,3 +6,4 @@ pyyalm  # I had to download it through pip
 torchvision
 pandas
 plotly
+opensimplex
