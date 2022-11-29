@@ -412,10 +412,93 @@ def get_input_stats(dataloader, multiplot=False, title=''):
 
 
 # =================== CREATING A CUSTOM MODEL ==================
-# not used for now
-class NeuralNetwork(nn.Module):
+class Bottleneck(nn.Module):
+    def __init__(self, in_planes, mid_planes, out_planes, bias=True, stride=1):
+        super(Bottleneck, self).__init__()
+        # bias is usally False in resnet
+        self.conv1 = nn.Conv2d(in_planes, mid_planes, kernel_size=1, stride=1, bias=bias)
+        self.conv2 = nn.Conv2d(mid_planes, mid_planes, kernel_size=3, stride=stride, padding=1, bias=bias)
+        self.conv3 = nn.Conv2d(mid_planes, out_planes, kernel_size=1, stride=1, bias=bias)
+        self.batchNormLike = nn.InstanceNorm2d(out_planes)
+        self.relu = nn.ReLU(inplace=True)
+        self.downsample = None
+        if in_planes != out_planes or stride != 1:
+            self.downsample = nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride)
+        pass
+
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.batchNormLike(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.batchNormLike(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.batchNormLike(out)
+
+        # skip connection
+        identity = x
+        if self.downsample is not None:
+            identity = self.downsample(x)
+        out += identity
+
+        out = self.relu(out)
+        return out
+    pass
+
+
+class ResLike1_0(nn.Module):
     def __init__(self):
-        super(NeuralNetwork, self).__init__()
+        super(ResLike1_0, self).__init__()
+        self.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=True)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool1 = nn.MaxPool2d(kernel_size=3, stride=2, padding=1, dilation=1, ceil_mode=False)
+        self.sequ1 = nn.Sequential(
+            Bottleneck(64, 64, 256),
+            Bottleneck(256, 64, 256),
+            Bottleneck(256, 64, 256),
+        )
+        self.sequ2 = nn.Sequential(
+            Bottleneck(256, 128, 512, stride=2),
+            Bottleneck(512, 128, 512),
+            Bottleneck(512, 128, 512),
+            Bottleneck(512, 128, 512),
+        )
+        self.sequ3 = nn.Sequential(
+            Bottleneck(512, 256, 1024, stride=2),
+            Bottleneck(1024, 256, 1024),
+            Bottleneck(1024, 256, 1024),
+            Bottleneck(1024, 256, 1024),
+            Bottleneck(1024, 256, 1024),
+            Bottleneck(1024, 256, 1024),
+        )
+        self.sequ4 = nn.Sequential(
+            Bottleneck(1024, 512, 2048, stride=2),
+            Bottleneck(2048, 512, 2048),
+            Bottleneck(2048, 512, 2048),
+        )
+        self.avgpool = nn.AdaptiveAvgPool2d(output_size=(1, 1))
+        self.flatten = nn.Flatten()
+        self.lin1 = nn.Linear(2048, 1)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.relu(x)
+        x = self.sequ1(x)
+        x = self.sequ2(x)
+        x = self.sequ3(x)
+        x = self.sequ4(x)
+        x = self.avgpool(x)
+        x = self.flatten(x)
+        x = self.lin1(x)
+        return x
+
+
+class GenNet1_0(nn.Module):
+    def __init__(self):
+        super(GenNet1_0, self).__init__()
         self.flatten = nn.Flatten()
         self.linear_relu_stack = nn.Sequential(
             nn.Linear(28*28, 512),
@@ -429,38 +512,6 @@ class NeuralNetwork(nn.Module):
         x = self.flatten(x)
         logits = self.linear_relu_stack(x)
         return logits
-
-
-class EndBlock(nn.Module):
-    def __init__(self, input_size, output_size):
-        super(EndBlock, self).__init__()
-        self.linear_relu_stack = nn.Sequential(
-            # nn.Linear(input_size, input_size),
-            # nn.ReLU(),
-            nn.Linear(input_size, input_size),
-            nn.ReLU(),
-            nn.Linear(input_size, input_size),
-        )
-        self.out_layer = nn.Linear(input_size, output_size)
-
-    def forward(self, x):
-        out = self.linear_relu_stack(x)
-        logits = self.out_layer(out + x)  # skip connection
-        return logits
-
-
-def sets_running_stats(node):
-    try:
-        if type(node) == nn.BatchNorm2d:
-            node.track_running_stats = False
-            return
-        for key in node._modules.keys():
-            sets_running_stats(node._modules[key])
-    except:
-        if type(node) == nn.BatchNorm2d:
-            node.track_running_stats = False
-
-
 # ======================== MAIN ROUTINES ========================
 def analise_network(model_name, datatype='valid'):
     dataloader = img_dataloaders[datatype]
@@ -636,17 +687,17 @@ def train():
         "learning_rate": 1E-3,
         "epochs": 30,
         "batch_size": BATCH_SIZE,
-        "architecture": "ResNet50",  # modified when loaded
+        "architecture": "ResLike2_0",  # modified when loaded
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
-        "optimiser": "SGD",
-        "data_used": "3.0 black_square",
+        "optimiser": "Adam",
+        "data_used": "3.0 black_square_minimalist",
         "data_size": len(img_dataloaders['train'].dataset),
         "valid_size": len(img_dataloaders['valid'].dataset),
         "exp_data_size": len(exp_dataloader.dataset),
         "running_stats": False,
     }
-    tags = ['resnet50']
+    tags = ['ResLike2_0']
     print('Dataset train size = %s' % len(img_datasets['train']))
     img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
                        for key in img_datasets}
@@ -656,16 +707,7 @@ def train():
     model_name = None
     branch_training = True  # always True unless continuing a checkpoint
     if model_name is None:
-        model = models.resnet50(weights=True)
-        # print(model._modules.keys())
-        # print(model._modules['fc'])
-        last_layer = 'fc'
-        temp_in = model._modules[last_layer].in_features
-        temp_out = 1
-        # model._modules[last_layer] = EndBlock(temp_in, temp_out)
-        model._modules[last_layer] = nn.Linear(temp_in, temp_out)
-        if not configs["running_stats"]:
-            sets_running_stats(model)
+        model = ResLike1_0()
         model = model.to(device)
 
         run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
@@ -676,13 +718,14 @@ def train():
 
     # ----------------->>> loss and optimisers
     loss_fn = nn.MSELoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=configs['learning_rate'])
+    optimizer = torch.optim.Adam(model.parameters(), lr=configs['learning_rate'])
 
     # ----------------->>> training the network
     RUN_NAME = run.name
     basicTrainingSequence(model, loss_fn, optimizer, img_dataloaders['train'],
                           img_dataloaders['valid'], configs['epochs'], init_epoch=init_epoch,
                           exp_dataloader=exp_dataloader)
+
 
 
 # ============================ MAIN ============================

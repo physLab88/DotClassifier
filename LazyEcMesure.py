@@ -410,24 +410,6 @@ def get_input_stats(dataloader, multiplot=False, title=''):
 
 # =================== CREATING A CUSTOM MODEL ==================
 # not used for now
-class NeuralNetwork(nn.Module):
-    def __init__(self):
-        super(NeuralNetwork, self).__init__()
-        self.flatten = nn.Flatten()
-        self.linear_relu_stack = nn.Sequential(
-            nn.Linear(28*28, 512),
-            nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, 1),
-        )
-
-    def forward(self, x):
-        x = self.flatten(x)
-        logits = self.linear_relu_stack(x)
-        return logits
-
-
 class Bottleneck(nn.Module):
     def __init__(self, in_planes, mid_planes, out_planes, bias=True, stride=1):
         super(Bottleneck, self).__init__()
@@ -435,8 +417,8 @@ class Bottleneck(nn.Module):
         self.conv1 = nn.Conv2d(in_planes, mid_planes, kernel_size=1, stride=1, bias=bias)
         self.conv2 = nn.Conv2d(mid_planes, mid_planes, kernel_size=3, stride=stride, padding=1, bias=bias)
         self.conv3 = nn.Conv2d(mid_planes, out_planes, kernel_size=1, stride=1, bias=bias)
+        self.batchNormLike = nn.InstanceNorm2d(out_planes)
         self.relu = nn.ReLU(inplace=True)
-
         self.downsample = None
         if in_planes != out_planes or stride != 1:
             self.downsample = nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride)
@@ -444,12 +426,15 @@ class Bottleneck(nn.Module):
 
     def forward(self, x):
         out = self.conv1(x)
+        out = self.batchNormLike(out)
         out = self.relu(out)
 
         out = self.conv2(out)
+        out = self.batchNormLike(out)
         out = self.relu(out)
 
         out = self.conv3(out)
+        out = self.batchNormLike(out)
 
         # skip connection
         identity = x
@@ -724,7 +709,7 @@ def train():
         "learning_rate": 1E-3,
         "epochs": 30,
         "batch_size": BATCH_SIZE,
-        "architecture": "ResLike1_0",  # modified when loaded
+        "architecture": "ResLike2_0",  # modified when loaded
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
         "optimiser": "Adam",
@@ -734,7 +719,7 @@ def train():
         "exp_data_size": len(exp_dataloader.dataset),
         "running_stats": False,
     }
-    tags = ['ResLike1_0']
+    tags = ['ResLike2_0']
     print('Dataset train size = %s' % len(img_datasets['train']))
     img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
                        for key in img_datasets}
