@@ -20,16 +20,19 @@ import diagram_imperfections as di
 # ===================== GLOBAL VARIABLES =====================
 RUN_NAME = ''
 ID = wandb.util.generate_id()
-NETWORK_DIRECTORY = "Networks/LazyEcMesure/"
-PROJECT = 'LazyEcMesure'
+GEN_NETWORK_DIRECTORY = "Networks/GAN_2_step/generator_nets/"
+NETWORK_DIRECTORY = "Networks/GAN_2_step/regression_nets/"
+PROJECT = 'GAN_2_step'
 ENTITY = "3it_dot_classifier"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
 DIRECTORY = "data/sim3_0/"
 EXP_DIRECTORY = "data/exp_w_labels/"
-BATCH_SIZE = 16
+BATCH_SIZE = 64
+GEN_BATCH_SIZE = 64
 RANDOM_CROP = True
 
+EXP_DATA_SIZE = 0
 exp_dataloader = None
 img_dataloaders = None
 
@@ -70,11 +73,11 @@ class StabilityDataset(Dataset):
         # threshold current
         sample = di.threshold_current(sample, target_info)
         # 3D map
-        # sample = np.log(np.abs(di.clip_current(sample, 2E-14)))
-        # sample = di.low_freq_3DMAP(sample, target_info)
-        # sample = np.exp(sample)
+        sample = np.log(np.abs(di.clip_current(sample, 2E-14)))
+        sample = di.low_freq_3DMAP(sample, target_info)
+        sample = np.exp(sample)
         # gaussian blur
-        # sample = di.gaussian_blur(sample, target_info, 0.3, 5.0)  # 1.0, 5.0)
+        sample = di.gaussian_blur(sample, target_info, 0.3, 5.0)  # 1.0, 5.0)
         # random current modulation
         # sample = di.rand_current_addition(sample, target_info, beta.rvs(0.8, 4, 1E-3, 0.07))
         # sample = di.rand_current_modulation(sample, target_info, 0.5)
@@ -102,7 +105,7 @@ class StabilityDataset(Dataset):
 
         # indices = np.moveaxis(np.indices(sample.shape), 0, -1)
         # sample = np.concatenate([sample[:, :, None], indices], axis=2)
-        # sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
+        sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
         sample = sample.astype('float32')
         if self.transform:
             sample = self.transform(sample)
@@ -152,7 +155,7 @@ class ExperimentalDataset(Dataset):
 
         # indices = np.moveaxis(np.indices(sample.shape), 0, -1)
         # sample = np.concatenate([sample[:, :, None], indices], axis=2)
-        # sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
+        sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
         sample = sample.astype('float32')
         if self.transform:
             sample = self.transform(sample)
@@ -428,97 +431,6 @@ class NeuralNetwork(nn.Module):
         return logits
 
 
-class Bottleneck(nn.Module):
-    def __init__(self, in_planes, mid_planes, out_planes, bias=True, stride=1):
-        super(Bottleneck, self).__init__()
-        # bias is usally False in resnet
-        self.conv1 = nn.Conv2d(in_planes, mid_planes, kernel_size=1, stride=1, bias=bias)
-        self.conv2 = nn.Conv2d(mid_planes, mid_planes, kernel_size=3, stride=stride, padding=1, bias=bias)
-        self.conv3 = nn.Conv2d(mid_planes, out_planes, kernel_size=1, stride=1, bias=bias)
-        self.relu = nn.ReLU(inplace=True)
-
-        self.downsample = None
-        if in_planes != out_planes or stride != 1:
-            self.downsample = nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride)
-        pass
-
-    def forward(self, x):
-        out = self.conv1(x)
-        out = self.relu(out)
-
-        out = self.conv2(out)
-        out = self.relu(out)
-
-        out = self.conv3(out)
-
-        # skip connection
-        identity = x
-        if self.downsample is not None:
-            identity = self.downsample(x)
-        out += identity
-
-        out = self.relu(out)
-        return out
-    pass
-
-
-class ResLike1_0(nn.Module):
-    def __init__(self):
-        super(ResLike1_0, self).__init__()
-        self.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=True)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool1 = nn.MaxPool2d(kernel_size=3, stride=2, padding=1, dilation=1, ceil_mode=False)
-        self.sequ1 = nn.Sequential(
-            Bottleneck(64, 64, 256),
-            Bottleneck(256, 64, 256),
-            Bottleneck(256, 64, 256),
-        )
-        self.sequ2 = nn.Sequential(
-            Bottleneck(256, 128, 512, stride=2),
-            Bottleneck(512, 128, 512),
-            Bottleneck(512, 128, 512),
-            Bottleneck(512, 128, 512),
-        )
-        self.sequ3 = nn.Sequential(
-            Bottleneck(512, 256, 1024, stride=2),
-            Bottleneck(1024, 256, 1024),
-            Bottleneck(1024, 256, 1024),
-            Bottleneck(1024, 256, 1024),
-            Bottleneck(1024, 256, 1024),
-            Bottleneck(1024, 256, 1024),
-        )
-        self.sequ4 = nn.Sequential(
-            Bottleneck(1024, 512, 2048, stride=2),
-            Bottleneck(2048, 512, 2048),
-            Bottleneck(2048, 512, 2048),
-        )
-        self.avgpool = nn.AdaptiveAvgPool2d(output_size=(1, 1))
-        self.flatten = nn.Flatten()
-        self.lin1 = nn.Linear(2048, 1)
-
-    def forward(self, x):
-        #print("=========================")
-        x = self.conv1(x)
-        #print(x)
-        x = self.relu(x)
-        #print(x)
-        x = self.sequ1(x)
-        #print(x)
-        x = self.sequ2(x)
-        #print(x)
-        x = self.sequ3(x)
-        #print(x)
-        x = self.sequ4(x)
-        #print(x)
-        x = self.avgpool(x)
-        #print(x)
-        x = self.flatten(x)
-        #print(x)
-        x = self.lin1(x)
-        #print(x)
-        return x
-
-
 class EndBlock(nn.Module):
     def __init__(self, input_size, output_size):
         super(EndBlock, self).__init__()
@@ -724,17 +636,17 @@ def train():
         "learning_rate": 1E-3,
         "epochs": 30,
         "batch_size": BATCH_SIZE,
-        "architecture": "ResLike1_0",  # modified when loaded
+        "architecture": "ResNet50",  # modified when loaded
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
-        "optimiser": "Adam",
-        "data_used": "3.0 black_square_minimalist",
+        "optimiser": "SGD",
+        "data_used": "3.0 black_square",
         "data_size": len(img_dataloaders['train'].dataset),
         "valid_size": len(img_dataloaders['valid'].dataset),
         "exp_data_size": len(exp_dataloader.dataset),
         "running_stats": False,
     }
-    tags = ['ResLike1_0']
+    tags = ['resnet50']
     print('Dataset train size = %s' % len(img_datasets['train']))
     img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
                        for key in img_datasets}
@@ -744,7 +656,16 @@ def train():
     model_name = None
     branch_training = True  # always True unless continuing a checkpoint
     if model_name is None:
-        model = ResLike1_0()
+        model = models.resnet50(weights=True)
+        # print(model._modules.keys())
+        # print(model._modules['fc'])
+        last_layer = 'fc'
+        temp_in = model._modules[last_layer].in_features
+        temp_out = 1
+        # model._modules[last_layer] = EndBlock(temp_in, temp_out)
+        model._modules[last_layer] = nn.Linear(temp_in, temp_out)
+        if not configs["running_stats"]:
+            sets_running_stats(model)
         model = model.to(device)
 
         run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
@@ -755,7 +676,7 @@ def train():
 
     # ----------------->>> loss and optimisers
     loss_fn = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=configs['learning_rate'])
+    optimizer = torch.optim.SGD(model.parameters(), lr=configs['learning_rate'])
 
     # ----------------->>> training the network
     RUN_NAME = run.name

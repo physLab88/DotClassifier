@@ -10,7 +10,7 @@ import yaml
 
 # ===================== DECLARING CONSTANTS ======================
 DARK_THICKNESS = 20
-
+BLACK_BOX = 200
 
 
 def white_noise(sample, noise_scale):
@@ -346,6 +346,21 @@ def low_freq_3DMAP(sample, target_info):
     # plt.imshow(new_sample, extent=[Vg[0],Vg[-1],Vd[0],Vd[-1]], cmap='binary_r')
     # cbar = plt.colorbar(label='')
     # plt.show()
+    return new_sample
+
+
+def black_square(sample):
+    new_sample = np.zeros([BLACK_BOX, BLACK_BOX])
+    if sample.shape[0] > BLACK_BOX:
+        # print("BIG BOY")
+        temp = ceil(sample.shape[0]/2)
+        sample = sample[int(temp-BLACK_BOX/2):int(temp+BLACK_BOX/2)]
+    if sample.shape[1] > BLACK_BOX:
+        # print("BIG BOY")
+        sample = sample[:, :BLACK_BOX]
+    shape = sample.shape
+    temp = shape[0]/2
+    new_sample[int(BLACK_BOX/2 - ceil(temp)):int(BLACK_BOX/2 + floor(temp)), 0:shape[1]] = sample
     return new_sample
 
 
