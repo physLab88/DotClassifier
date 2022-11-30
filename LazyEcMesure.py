@@ -27,9 +27,10 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
 DIRECTORY = "data/sim3_0/"
 EXP_DIRECTORY = "data/exp_w_labels/"
-BATCH_SIZE = 8
+BATCH_SIZE = 1
 RANDOM_CROP = True
-DROPOUT = 0.15
+DROPOUT = 0.15  # used if using dropout layers
+NUM_GROUPS = 5  # used if using groupe norm
 
 exp_dataloader = None
 img_dataloaders = None
@@ -423,22 +424,22 @@ class Bottleneck(nn.Module):
         if in_planes != out_planes or stride != 1:
             self.downsample = nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride)
 
-        self.dropout = nn.Dropout(DROPOUT, inplace=True)
+        # self.dropout = nn.Dropout(DROPOUT, inplace=True)
         pass
 
     def forward(self, x):
         out = self.conv1(x)
-        out = self.dropout(out)
+        # out = self.dropout(out)
         out = self.batchNormLike(out)
         out = self.relu(out)
 
         out = self.conv2(out)
-        out = self.dropout(out)
+        # out = self.dropout(out)
         out = self.batchNormLike(out)
         out = self.relu(out)
 
         out = self.conv3(out)
-        out = self.dropout(out)
+        # out = self.dropout(out)
         out = self.batchNormLike(out)
 
         # skip connection
@@ -447,7 +448,7 @@ class Bottleneck(nn.Module):
             identity = self.downsample(x)
         out += identity
 
-        out = self.dropout(out)
+        # out = self.dropout(out)
         out = self.relu(out)
         return out
 
@@ -716,7 +717,7 @@ def train():
         "learning_rate": 1E-3,
         "epochs": 30,
         "batch_size": BATCH_SIZE,
-        "architecture": "ResLike3_0",  # modified when loaded
+        "architecture": "ResLike2_0",  # modified when loaded
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
         "optimiser": "Adam",
@@ -727,7 +728,7 @@ def train():
         "running_stats": False,
         "dropout": DROPOUT,
     }
-    tags = ['ResLike3_0']
+    tags = ['ResLike2_0']
     print('Dataset train size = %s' % len(img_datasets['train']))
     img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
                        for key in img_datasets}
