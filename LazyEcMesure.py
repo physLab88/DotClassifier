@@ -27,10 +27,10 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
 DIRECTORY = "data/sim3_0/"
 EXP_DIRECTORY = "data/exp_w_labels/"
-BATCH_SIZE = 1
+BATCH_SIZE = 8
 RANDOM_CROP = True
 DROPOUT = 0.15  # used if using dropout layers
-NUM_GROUPS = 5  # used if using groupe norm
+NUM_GROUPS = 4  # used if using groupe norm
 
 exp_dataloader = None
 img_dataloaders = None
@@ -418,7 +418,7 @@ class Bottleneck(nn.Module):
         self.conv1 = nn.Conv2d(in_planes, mid_planes, kernel_size=1, stride=1, bias=bias)
         self.conv2 = nn.Conv2d(mid_planes, mid_planes, kernel_size=3, stride=stride, padding=1, bias=bias)
         self.conv3 = nn.Conv2d(mid_planes, out_planes, kernel_size=1, stride=1, bias=bias)
-        self.batchNormLike = nn.InstanceNorm2d(out_planes)
+        self.batchNormLike = nn.GroupNorm(NUM_GROUPS, out_planes)  # nn.InstanceNorm2d(out_planes)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = None
         if in_planes != out_planes or stride != 1:
@@ -717,7 +717,7 @@ def train():
         "learning_rate": 1E-3,
         "epochs": 30,
         "batch_size": BATCH_SIZE,
-        "architecture": "ResLike2_0",  # modified when loaded
+        "architecture": "ResLike2_1",  # modified when loaded
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
         "optimiser": "Adam",
@@ -728,7 +728,7 @@ def train():
         "running_stats": False,
         "dropout": DROPOUT,
     }
-    tags = ['ResLike2_0']
+    tags = ['ResLike2_1']
     print('Dataset train size = %s' % len(img_datasets['train']))
     img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
                        for key in img_datasets}
