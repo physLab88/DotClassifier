@@ -10,7 +10,7 @@ import yaml
 
 # ===================== DECLARING CONSTANTS ======================
 DARK_THICKNESS = 20
-BLACK_BOX = 200
+BLACK_BOX = 128
 
 
 def white_noise(sample, noise_scale):
@@ -135,6 +135,26 @@ def random_crop(sample, target_info):
         temp = ceil((MIN_SIZE - temp) / 2)
         newBox[1][1] -= temp
         newBox[0][1] += temp
+    sample = sample[newBox[1][1]:newBox[0][1], newBox[1][0]:newBox[0][0]]
+    # print("old: %s,\t new: %s" % (box, newBox))
+    return sample, newBox
+
+
+def diamond_crop(sample, target_info):
+    """ This function crops the first diamond of a simulated data"""
+    box = target_info['box']
+    # the floor() term in next line is for when we want to crop into the diamond
+    temp = box[1][1] + floor((box[0][1] - box[1][1])/2 * 0.35)
+    Vds_empty_space = int(beta.rvs(1.2, 0.80, 0, temp))
+    # print(box)
+    max_Vds = randint(min([box[0][0]+4, target_info['nVg']-1]),
+                      min([target_info['nVg'], box[0][0]+4+(box[0][0]-box[1][0])/2]))
+    min_Vds = randint(0, box[1][0])
+    newBox = [[max_Vds, target_info['nVds'] - Vds_empty_space],
+              [min_Vds, Vds_empty_space],
+              ]
+
+    # making surer the box satisfies a min size
     sample = sample[newBox[1][1]:newBox[0][1], newBox[1][0]:newBox[0][0]]
     # print("old: %s,\t new: %s" % (box, newBox))
     return sample, newBox

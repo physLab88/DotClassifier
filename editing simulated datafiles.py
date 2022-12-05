@@ -6,7 +6,7 @@ import yaml
 import os
 import matplotlib.pyplot as plt
 
-root_dir = "data/sim3_0/train/"
+root_dir = "data/exp_croped/"
 
 
 def verify_if_files_attached(delete_unattached=False):
@@ -98,22 +98,18 @@ def crop_image():
                 Vds = np.linspace(info['Vds_range'][0], info['Vds_range'][1], info['nVds'])
                 Vg = np.concatenate([Vg, [0]])[UL[0]: LR[0]]
                 Vds = np.concatenate([Vds, [0]])[UL[1]: LR[1]]
-                if len(Vg) < 33:
-                    print('error, Vg does not have enough pixels')
-                elif len(Vds) < 33:
-                    print('error, Vds does not have enough pixels')
-                else:
-                    info['Vg_range'] = [float(Vg[0]), float(Vg[-1])]
-                    info['nVg'] = len(Vg)
-                    info['Vds_range'] = [float(Vds[0]), float(Vds[-1])]
-                    info['nVds'] = len(Vds)
-                    diagram = diagram[UL[1]:LR[1], UL[0]:LR[0]]
-                    # save everything
-                    np.save(sample_name, diagram)
-                    f = open(root_dir + '_data_indexer.yaml', 'w')
-                    yaml.dump(infos, f)
-                    print('yay')
-                    break
+
+                info['Vg_range'] = [float(Vg[0]), float(Vg[-1])]
+                info['nVg'] = len(Vg)
+                info['Vds_range'] = [float(Vds[0]), float(Vds[-1])]
+                info['nVds'] = len(Vds)
+                diagram = diagram[UL[1]:LR[1], UL[0]:LR[0]]
+                # save everything
+                np.save(sample_name, diagram)
+                f = open(root_dir + '_data_indexer.yaml', 'w')
+                yaml.dump(infos, f)
+                print('yay')
+                break
             elif is_good == 'c':
                 # c is for cancel, won't save or change anything of this datapoint
                 break
@@ -139,8 +135,8 @@ def crop_image():
 
 def main():
     # verify_if_files_attached(delete_unattached=False)
-    verify_min_img_size(del_too_small=False)
-    # crop_image()
+    # verify_min_img_size(del_too_small=False)
+    crop_image()
 
 
 if __name__ == '__main__':

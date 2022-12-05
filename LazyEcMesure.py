@@ -26,8 +26,8 @@ ENTITY = "3it_dot_classifier"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
 DIRECTORY = "data/sim3_0/"
-EXP_DIRECTORY = "data/exp_w_labels/"
-BATCH_SIZE = 8
+EXP_DIRECTORY = "data/exp_croped/"
+BATCH_SIZE = 16
 RANDOM_CROP = True
 DROPOUT = 0.15  # used if using dropout layers
 NUM_GROUPS = 4  # used if using groupe norm
@@ -76,21 +76,17 @@ class StabilityDataset(Dataset):
         # sample = di.low_freq_3DMAP(sample, target_info)
         # sample = np.exp(sample)
         # gaussian blur
-        # sample = di.gaussian_blur(sample, target_info, 0.3, 5.0)  # 1.0, 5.0)
+        # sample = di.gaussian_blur(sample, target_info, 0, 3.0)  # 1.0, 5.0)
         # random current modulation
         # sample = di.rand_current_addition(sample, target_info, beta.rvs(0.8, 4, 1E-3, 0.07))
         # sample = di.rand_current_modulation(sample, target_info, 0.5)
         # white noise
-        # sample = di.white_noise(sample, np.exp(beta.rvs(0.85, 1.5, -29.5, 2)))
+        sample = di.white_noise(sample, np.exp(beta.rvs(0.85, 1.5, -30.5, 2)))
 
         # random crop:
         newBox = []
-        if RANDOM_CROP:
-            sample, newBox = di.random_crop(sample, target_info)
-            # target /= newBox[1][1] - newBox[0][1]  # try it out normalised to height
-        else:
-            pass
-            # target /= (target_info["nVds"] - 1)  # try it out normalised to height
+        # sample, newBox = di.random_crop(sample, target_info)  # random crop
+        sample, newBox = di.diamond_crop(sample, target_info)  # or diamond crop
         newBox = torch.IntTensor(newBox)
 
         # scaling
@@ -101,9 +97,8 @@ class StabilityDataset(Dataset):
         sample = di.clip_current(sample, 2E-14, 1E-7)
 
         sample = np.log(np.abs(sample))
+        sample = di.random_multiply(sample, beta.rvs(1, 1, 0.8, 1.2))
 
-        # indices = np.moveaxis(np.indices(sample.shape), 0, -1)
-        # sample = np.concatenate([sample[:, :, None], indices], axis=2)
         # sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
         sample = sample.astype('float32')
         if self.transform:
@@ -210,7 +205,7 @@ def lookAtData(dataloader, info, nrows=1, ncols=1):
         for j in range(ncols):
             plt.sca(axs[i, j])
             diagrams, labels, idx = next(iter(dataloader))
-            #print(diagrams[0].size())
+            # print(diagrams[0].size())
             index = np.random.randint(0, BATCH_SIZE)
 
             diagram = diagrams[index][0]
@@ -220,7 +215,7 @@ def lookAtData(dataloader, info, nrows=1, ncols=1):
             # print(np.log(Imin))
             # diagram = di.clip_current(diagram, Imin)
 
-            plt.title('Pix_height: %s' % '{:2f}'.format(float(labels[index])))
+            plt.title('h:%spx' % '{:.2f}'.format(float(labels[index])))
             plt.imshow(diagram, aspect=1, cmap='hot')  # extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]]
             # plt.xlim([0, 290])
     for j in range(ncols):
@@ -239,7 +234,7 @@ def look_at_exp():
         Vg = info['Vg_range']
         Vds = info['Vds_range']
         plt.title('Ec: %s meV  pixel height %s' % ('{:2f}'.format(float(info['Ec'])), '{:2f}'.format(float(label))))
-        plt.imshow(diagram, aspect=1, cmap='hot', extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]])
+        plt.imshow(diagram, aspect=1, cmap='hot')  # , extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]])
         plt.show()
 
 
@@ -418,7 +413,7 @@ class Bottleneck(nn.Module):
         self.conv1 = nn.Conv2d(in_planes, mid_planes, kernel_size=1, stride=1, bias=bias)
         self.conv2 = nn.Conv2d(mid_planes, mid_planes, kernel_size=3, stride=stride, padding=1, bias=bias)
         self.conv3 = nn.Conv2d(mid_planes, out_planes, kernel_size=1, stride=1, bias=bias)
-        self.batchNormLike = nn.GroupNorm(NUM_GROUPS, out_planes)  # nn.InstanceNorm2d(out_planes)
+        self.batchNormLike = nn.InstanceNorm2d(out_planes)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = None
         if in_planes != out_planes or stride != 1:
@@ -717,18 +712,18 @@ def train():
         "learning_rate": 1E-3,
         "epochs": 30,
         "batch_size": BATCH_SIZE,
-        "architecture": "ResLike2_1",  # modified when loaded
+        "architecture": "ResLike2_0",  # modified when loaded
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
         "optimiser": "Adam",
-        "data_used": "3.0 black_square_minimalist",
+        "data_used": "3.0 di-crop",
         "data_size": len(img_dataloaders['train'].dataset),
         "valid_size": len(img_dataloaders['valid'].dataset),
         "exp_data_size": len(exp_dataloader.dataset),
         "running_stats": False,
         "dropout": DROPOUT,
     }
-    tags = ['ResLike2_1']
+    tags = ['ResLike2_0']
     print('Dataset train size = %s' % len(img_datasets['train']))
     img_dataloaders = {key: DataLoader(img_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
                        for key in img_datasets}
@@ -771,7 +766,7 @@ def main():
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 4, 8)
     # look_at_exp()
     train()
-    # test_on_exp("eternal-feather")
+    # test_on_exp("graceful-disco")
     # analise_network("smart-wave", 'valid')
 
 
