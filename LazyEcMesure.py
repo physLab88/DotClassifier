@@ -29,7 +29,7 @@ DIRECTORY = "data/sim3_0/"
 EXP_DIRECTORY = "data/exp_croped/"
 BATCH_SIZE = 16
 RANDOM_CROP = True
-DROPOUT = 0.15  # used if using dropout layers
+DROPOUT = 0.30  # used if using dropout layers
 NUM_GROUPS = 4  # used if using groupe norm
 
 exp_dataloader = None
@@ -419,22 +419,19 @@ class Bottleneck(nn.Module):
         if in_planes != out_planes or stride != 1:
             self.downsample = nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride)
 
-        # self.dropout = nn.Dropout(DROPOUT, inplace=True)
+
         pass
 
     def forward(self, x):
         out = self.conv1(x)
-        # out = self.dropout(out)
         out = self.batchNormLike(out)
         out = self.relu(out)
 
         out = self.conv2(out)
-        # out = self.dropout(out)
         out = self.batchNormLike(out)
         out = self.relu(out)
 
         out = self.conv3(out)
-        # out = self.dropout(out)
         out = self.batchNormLike(out)
 
         # skip connection
@@ -443,7 +440,6 @@ class Bottleneck(nn.Module):
             identity = self.downsample(x)
         out += identity
 
-        # out = self.dropout(out)
         out = self.relu(out)
         return out
 
@@ -481,6 +477,7 @@ class ResLike1_0(nn.Module):
             Bottleneck(2048, 512, 2048),
         )
         self.avgpool = nn.AdaptiveAvgPool2d(output_size=(1, 1))
+        # self.dropout = nn.Dropout(DROPOUT, inplace=True)
         self.flatten = nn.Flatten()
         self.lin1 = nn.Linear(2048, 1)
 
@@ -502,6 +499,7 @@ class ResLike1_0(nn.Module):
         #print(x)
         x = self.flatten(x)
         #print(x)
+        # x = self.dropout(x)
         x = self.lin1(x)
         #print(x)
         return x
@@ -712,7 +710,7 @@ def train():
         "learning_rate": 1E-3,
         "epochs": 30,
         "batch_size": BATCH_SIZE,
-        "architecture": "ResLike2_0",  # modified when loaded
+        "architecture": "ResLike3_3",  # modified when loaded
         "pretrained": True,  # modified when loaded
         "loss_fn": "mean squared error loss",
         "optimiser": "Adam",
@@ -766,8 +764,8 @@ def main():
     # lookAtData(img_dataloaders['train'], img_datasets['train'].info, 4, 8)
     # look_at_exp()
     train()
-    # test_on_exp("graceful-disco")
-    # analise_network("smart-wave", 'valid')
+    # test_on_exp("dark-firebrand")
+    # analise_network("olive-surf", 'valid')
 
 
 if __name__ == '__main__':
