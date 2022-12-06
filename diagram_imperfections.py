@@ -371,6 +371,7 @@ def low_freq_3DMAP(sample, target_info):
 
 def black_square(sample):
     new_sample = np.zeros([BLACK_BOX, BLACK_BOX])
+    mask = np.full([BLACK_BOX, BLACK_BOX], False)
     if sample.shape[0] > BLACK_BOX:
         # print("BIG BOY")
         temp = ceil(sample.shape[0]/2)
@@ -380,8 +381,9 @@ def black_square(sample):
         sample = sample[:, :BLACK_BOX]
     shape = sample.shape
     temp = shape[0]/2
+    mask[int(BLACK_BOX/2 - ceil(temp)):int(BLACK_BOX/2 + floor(temp)), 0:shape[1]] = True
     new_sample[int(BLACK_BOX/2 - ceil(temp)):int(BLACK_BOX/2 + floor(temp)), 0:shape[1]] = sample
-    return new_sample
+    return new_sample, mask
 
 
 # ============================ MAIN ==============================

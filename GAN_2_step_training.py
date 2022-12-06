@@ -29,10 +29,9 @@ print(f"Using {device} device")
 DIRECTORY = "data/sim3_0/"
 EXP_DIRECTORY = "data/exp_w_labels/"
 BATCH_SIZE = 8
-GEN_BATCH_SIZE = 64
 RANDOM_CROP = True
 RANDOM_VECT_SIZE = 100
-BACK_FEED = 8
+BACK_FEED = 25
 EXP_DATA_DEGENERANCY = 300
 NUM_DISCRIMINATOR = 1
 
@@ -81,11 +80,11 @@ class StabilityDataset(Dataset):
         target = target / ((target_info["Vds_range"][1] - target_info["Vds_range"][0]) / (target_info["nVds"] - 1))
 
         # threshold current
-        sample = di.threshold_current(sample, target_info)
+        # sample = di.threshold_current(sample, target_info)
         # 3D map
-        sample = np.log(np.abs(di.clip_current(sample, 2E-14)))
-        sample = di.low_freq_3DMAP(sample, target_info)
-        sample = np.exp(sample)
+        # sample = np.log(np.abs(di.clip_current(sample, 2E-14)))
+        # sample = di.low_freq_3DMAP(sample, target_info)
+        # sample = np.exp(sample)
 
         # random crop:
         newBox = []
@@ -100,7 +99,8 @@ class StabilityDataset(Dataset):
         # scaling
         sample = di.random_multiply(sample, np.exp(beta.rvs(2.8, 3.7, -28, 8.5)))
         # black square
-        sample = di.black_square(sample)
+        sample, mask = di.black_square(sample)
+        mask = torch.BoolTensor(mask)
         # clip
         sample = di.clip_current(sample, 2E-14, 1E-7)
         sample = np.log(np.abs(sample))
@@ -109,8 +109,10 @@ class StabilityDataset(Dataset):
             sample = self.transform(sample)
         if self.target_transform:
             target = self.target_transform(target)
+        if len(sample.size()) == 3:
+            mask = mask[None,]
         # print(sample.size())
-        return sample, target, idx  # , newBox
+        return sample, target, idx, mask
 
 
 class ExperimentalDataset(Dataset):
@@ -144,7 +146,8 @@ class ExperimentalDataset(Dataset):
         target_info = self.info[idx]
         # here, we define the target Ec in Vds_pixels
         target = target / ((target_info["Vds_range"][1] - target_info["Vds_range"][0]) / (target_info["nVds"] - 1))
-        sample = di.black_square(sample)
+        sample, mask = di.black_square(sample)
+        mask = torch.BoolTensor(mask)
         sample = di.clip_current(sample, 2E-14, 1E-7)
 
         sample = np.log(np.abs(sample))
@@ -154,7 +157,9 @@ class ExperimentalDataset(Dataset):
         if self.target_transform:
             target = self.target_transform(target)
         # print(sample.size())
-        return sample, target, idx  # , newBox
+        if len(sample.size()) == 3:
+            mask = mask[None,]
+        return sample, target, idx, mask
 
 
 class GenDataset(Dataset):
@@ -177,19 +182,22 @@ class GenDataset(Dataset):
             idx = idx.tolist()
 
         if idx < EXP_DATA_DEGENERANCY*self.exp_len:
-            sample, target, idx = self.exp_dataset[idx%self.exp_len]
+            sample, target, idx, mask = self.exp_dataset[idx%self.exp_len]
             sample = sample.to(device)
             idx = -(idx + 1)  # in my convention, index is negative if it represents an exp data
         else:
-            sample, target, idx = self.sim_dataset[idx - EXP_DATA_DEGENERANCY*self.exp_len]
+            sample, target, idx, mask = self.sim_dataset[idx - EXP_DATA_DEGENERANCY*self.exp_len]
             sample = sample.to(device)
             # with torch.no_grad():
-            sample = gan_model(sample)
+            batch = int(sample.size()[0])
+            rand_vect = torch.normal(1, 0, size=[batch, RANDOM_VECT_SIZE], device=device)
+            sample = gan_model(sample, rand_vect)
+            sample[mask==False] = np.log(2E-14)
         if self.transform:
             sample = self.transform(sample)
         if self.target_transform:
             target = self.target_transform(target)
-        return sample, target, idx  # , newBox
+        return sample, target, idx, mask
 
 
 data_transforms = {'train': transforms.Compose([
@@ -226,11 +234,12 @@ def lookAtData(dataloader, info, nrows=1, ncols=1, show=True):
         axs[i, 0].set_ylabel(r'$V_{ds}$ in mV')
         for j in range(ncols):
             plt.sca(axs[i, j])
-            diagrams, labels, idx = next(iter(dataloader))
+            diagrams, labels, idx, mask = next(iter(dataloader))
             # print(diagrams[0].size())
             index = np.random.randint(0, BATCH_SIZE)
 
             diagram = diagrams[index][0]
+            diagram = diagram.cpu().detach()
             size = diagram.size()
             # print(size)
             # Imin = diagram[:floor(size[0]/2)-2, :].min()
@@ -272,7 +281,7 @@ def test_loop(dataloader, model, loss_fn):
     with torch.no_grad():
         i = 0
         for k in range(3):
-            for X, y, index in dataloader:
+            for X, y, index, mask in dataloader:
                 X = X.to(device)
                 y = y.to(device)
                 pred = model(X)
@@ -284,16 +293,21 @@ def test_loop(dataloader, model, loss_fn):
     return test_loss
 
 
-def train_loop(dataloader, model, loss_fn, optimizer):
+def train_loop(dataloader, model, loss_fn, optimizer, GAN=False):
     size = len(dataloader.dataset)
     i = 0
     cron.start('train_print')
     running_loss = 0
-    for batch, (X, y, index) in enumerate(dataloader):
+    for batch, (X, y, index, mask) in enumerate(dataloader):
         X = X.to(device)
         y = y.to(device)
         # Compute prediction and loss
-        pred = model(X)
+        if GAN:
+            batch_ = int(X.size()[0])
+            rand_vect = torch.normal(1, 0, size=[batch_, RANDOM_VECT_SIZE], device=device)
+            pred = model(X, rand_vect)
+        else:
+            pred = model(X)
         loss = loss_fn(pred, y)
         running_loss += loss
 
@@ -360,8 +374,11 @@ def basicGANTrainingSequence(disc_model, disc_loss_fn, disc_optimizer,
     global discriminators, gan_model
     discriminators = [disc_model().to(device) for i in range(NUM_DISCRIMINATOR)]
     for E in range(numEpoch):
+        print("Starting Epoch %s \n ========================================" % (E + 1))
         # ------------------------ TRAIN DISCR --------------------------
         # reset random discriminator and train it?
+        if E % 3 == 0:
+            discriminators = [disc_model().to(device) for i in range(NUM_DISCRIMINATOR)]
         log_dic = {"epoch": E + init_epoch}
         for model in discriminators:
             model.zero_grad()
@@ -373,12 +390,16 @@ def basicGANTrainingSequence(disc_model, disc_loss_fn, disc_optimizer,
         for j in range(1):
             loss_fn = lambda pred, y: gan_loss_fn(pred, y, randint(0, NUM_DISCRIMINATOR))
             gan_model.zero_grad()
-            train_loss = train_loop(gan_dataloader, gan_model, loss_fn, gan_optimizer)
+            train_loss = train_loop(gan_dataloader, gan_model, loss_fn, gan_optimizer, GAN=True)
             log_dic['gen_loss'] = train_loss
         gen_fig = lookAtData(valid_dataloader, sim_datasets['valid'].info, 4, 8, show=False)
         log_dic["gen_fig"] = gen_fig
         wandb.log(log_dic)
 
+        # ------------------------ SAVE_MODEL --------------------------
+        model_scripted = torch.jit.script(gan_model)  # Export to TorchScript
+        model_scripted.save(GEN_NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')
+        """
         # ------------------------ TEST_MODEL --------------------------
         if (E+1) % 8 == 0:
             # to test the model, we train the model and valid it on exp data and valid data
@@ -391,11 +412,8 @@ def basicGANTrainingSequence(disc_model, disc_loss_fn, disc_optimizer,
                 exp_loss = test_loop(exp_dataloader, model, disc_loss_fn)
                 log_dic = {"loss": loss, "train loss": train_loss, "exp loss":exp_loss,
                            "epoch": E + init_epoch + j/valid_num/2}
-                wandb.log(log_dic)
+                wandb.log(log_dic)"""
 
-        # ------------------------ SAVE_MODEL --------------------------
-        model_scripted = torch.jit.script(gan_model)  # Export to TorchScript
-        model_scripted.save(NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')
     return
 
 
@@ -632,7 +650,7 @@ class GenNet1_0(nn.Module):
         # self.batchNormLike = nn.InstanceNorm2d(out_planes)
         self.relu = nn.ReLU(inplace=True)
 
-    def forward(self, x):
+    def forward(self, x, rand_vect):
         # deconstructing simulated data
         x1 = self.conv1(x)
         x2 = self.conv2(x1)
@@ -643,11 +661,15 @@ class GenNet1_0(nn.Module):
         # generating random vector
         if len(x.size()) == 4:
             batch = int(x.size()[0])
-            out = torch.tensor(normal(size=[batch, RANDOM_VECT_SIZE]).astype('float32'), device=device)
+            # out = torch.normal(1, 0, size=[batch, RANDOM_VECT_SIZE], device=device)
+            # out = torch.tensor(normal(size=[batch, RANDOM_VECT_SIZE]).astype('float32'), device=device)
+            out = rand_vect
             out = self.project(out)
             out = out.view(batch, -1, 4, 4)
         else:
-            out = torch.tensor(normal(size=[RANDOM_VECT_SIZE]).astype('float32'), device=device)
+            # out = torch.normal(1, 0, size=[RANDOM_VECT_SIZE], device=device)
+            # out = torch.tensor(normal(size=[RANDOM_VECT_SIZE]).astype('float32'), device=device)
+            out = rand_vect
             out = self.project(out)
             out = out.view(-1, 4, 4)
         out = torch.cat([x5, out], dim=-3)
@@ -695,7 +717,7 @@ def analise_network(model_name, datatype='valid'):
     square_res = []
     for k in range(3):
         with torch.no_grad():
-            for X, y, index in dataloader:
+            for X, y, index, mask in dataloader:
                 info = infos[index]
                 X = X.to(device)
                 y = y.to(device)
@@ -789,7 +811,7 @@ def test_on_exp(model_name):
     ys = []
     preds = []
     with torch.no_grad():
-        for X, y, index in dataloader:
+        for X, y, index, mask in dataloader:
             info = infos[index]
             X = X.to(device)
             y = y.to(device)
@@ -847,7 +869,7 @@ def train():
     global ID, RUN_NAME, gan_model
     configs = {
         "learning_rate": 1E-3,
-        "epochs": 30,
+        "epochs": 100,
         "batch_size": BATCH_SIZE,
         "architecture": "ResLike2_0",  # modified when loaded
         "pretrained": True,  # modified when loaded
@@ -918,7 +940,7 @@ def train_GAN():
         gan_model = GenNet1_0().to(device)
 
         run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
-                         config=configs, tags=tags, group='gan')  # notes, tags, group are other usfull parameters
+                         config=configs, tags=tags)  # notes, tags, group are other usfull parameters
         init_epoch = 1
     else:
         run, model, init_epoch, configs = load_gan_model(model_name, configs, branch_training=branch_training, tags=tags)
