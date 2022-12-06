@@ -293,7 +293,7 @@ def test_loop(dataloader, model, loss_fn):
     return test_loss
 
 
-def train_loop(dataloader, model, loss_fn, optimizer, GAN=False):
+def train_loop(dataloader, model, loss_fn, optimizer, gen=False):
     size = len(dataloader.dataset)
     i = 0
     cron.start('train_print')
@@ -302,7 +302,7 @@ def train_loop(dataloader, model, loss_fn, optimizer, GAN=False):
         X = X.to(device)
         y = y.to(device)
         # Compute prediction and loss
-        if GAN:
+        if gen:
             batch_ = int(X.size()[0])
             rand_vect = torch.normal(1, 0, size=[batch_, RANDOM_VECT_SIZE], device=device)
             pred = model(X, rand_vect)
@@ -325,6 +325,27 @@ def train_loop(dataloader, model, loss_fn, optimizer, GAN=False):
             print("loss: {loss:.5f}  {bar:>} {perc:.2%}".format(loss=running_loss / current, bar=bar, perc=temp))
     cron.stop('train_print')
     return running_loss / size
+
+
+def GAN_train_loop(batch, model, loss_fn, optimizer, gen=False):
+    X, y, index, mask = batch
+    size = len(index)
+
+    X = X.to(device)
+    y = y.to(device)
+    # Compute prediction and loss
+    if gen:
+        rand_vect = torch.normal(1, 0, size=[size, RANDOM_VECT_SIZE], device=device)
+        pred = model(X, rand_vect)
+    else:
+        pred = model(X)
+    loss = loss_fn(pred, y)
+
+    # Backpropagation
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    return loss
 
 
 def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_dataloader, numEpoch, init_epoch=1,
@@ -372,26 +393,44 @@ def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_data
 def basicGANTrainingSequence(disc_model, disc_loss_fn, disc_optimizer,
                              gan_loss_fn, gan_optimizer, numEpoch, init_epoch=1):
     global discriminators, gan_model
-    discriminators = [disc_model().to(device) for i in range(NUM_DISCRIMINATOR)]
+    discriminators = disc_model().to(device)
     for E in range(numEpoch):
         print("Starting Epoch %s \n ========================================" % (E + 1))
-        # ------------------------ TRAIN DISCR --------------------------
         # reset random discriminator and train it?
         if E % 3 == 0:
-            discriminators = [disc_model().to(device) for i in range(NUM_DISCRIMINATOR)]
+            discriminators = disc_model().to(device)
+
+        i = 0
+        cron.start('train_print')
         log_dic = {"epoch": E + init_epoch}
-        for model in discriminators:
-            model.zero_grad()
-            optimiser = disc_optimizer(model.parameters())
-            for j in range(1):
-                train_loss = train_loop(disc_dataloader, model, disc_loss_fn, optimiser)
-                log_dic['Disc_loss'] = train_loss
-        # ------------------------ TRAIN GAN --------------------------
-        for j in range(1):
-            loss_fn = lambda pred, y: gan_loss_fn(pred, y, randint(0, NUM_DISCRIMINATOR))
+
+        gan_running_loss = 0
+        disc_running_loss = 0
+        size = len(disc_dataloader.dataset)
+        disc_iter = iter(disc_dataloader)
+        disc_batch = next(disc_iter, None)
+        d_optimiser = disc_optimizer(discriminators.parameters())
+        while disc_batch is not None:
+            discriminators.zero_grad()
+            disc_running_loss += GAN_train_loop(disc_batch, discriminators,
+                                                disc_loss_fn, d_optimiser)
+
+            loss_fn = lambda pred, y: gan_loss_fn(pred, y, discriminators, disc_loss_fn)
             gan_model.zero_grad()
-            train_loss = train_loop(gan_dataloader, gan_model, loss_fn, gan_optimizer, GAN=True)
-            log_dic['gen_loss'] = train_loss
+            gan_running_loss += GAN_train_loop(next(iter(gan_dataloader)), gan_model, loss_fn, gan_optimizer, gen=True)
+
+            disc_batch = next(disc_iter, None)
+            i += 1
+            if cron.t('train_print') >= 10.0:
+                cron.start('train_print')
+                current = i * BATCH_SIZE
+                temp = current / size
+                bar = '[' + int(temp * 30) * '#' + int((1 - temp) * 30) * '-' + ']'
+                print("loss: {loss:.5f}  {bar:>} {perc:.2%}".format(loss=disc_running_loss / current, bar=bar, perc=temp))
+        cron.stop('train_print')
+        log_dic['Disc_loss'] = disc_running_loss/size
+        log_dic['gen_loss'] = gan_running_loss/size
+        # generating figures
         gen_fig = lookAtData(valid_dataloader, sim_datasets['valid'].info, 4, 8, show=False)
         log_dic["gen_fig"] = gen_fig
         wandb.log(log_dic)
@@ -399,6 +438,7 @@ def basicGANTrainingSequence(disc_model, disc_loss_fn, disc_optimizer,
         # ------------------------ SAVE_MODEL --------------------------
         model_scripted = torch.jit.script(gan_model)  # Export to TorchScript
         model_scripted.save(GEN_NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')
+
         """
         # ------------------------ TEST_MODEL --------------------------
         if (E+1) % 8 == 0:
@@ -413,7 +453,6 @@ def basicGANTrainingSequence(disc_model, disc_loss_fn, disc_optimizer,
                 log_dic = {"loss": loss, "train loss": train_loss, "exp loss":exp_loss,
                            "epoch": E + init_epoch + j/valid_num/2}
                 wandb.log(log_dic)"""
-
     return
 
 
@@ -683,18 +722,10 @@ class GenNet1_0(nn.Module):
 
 
 # custom loss function
-def FOTloss(generated_sample, label, model_number, loss_fn):  # my test loss function
-    model = discriminators[model_number]
-    pred = model(generated_sample)
+def FOTloss(generated_sample, label, disc_model, loss_fn):  # my test loss function
+    pred = disc_model(generated_sample)
     loss = loss_fn(pred, label)
     return loss
-
-
-def prob_sum_loss(my_outputs, my_labels):  # my test loss function
-    temp = 9 - my_outputs.sum(dim=1)
-    temp1 = 2*my_outputs[np.arange(my_labels.size()[0]), my_labels]
-    temp += temp1
-    return (10-temp).sum()
 
 
 # ======================== MAIN ROUTINES ========================
