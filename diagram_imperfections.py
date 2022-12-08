@@ -35,6 +35,16 @@ def pltBeta(a, b, loc=0.0, scale=1.0):
     plt.show()
 
 
+def change_res(sample, target):
+    """This function changes the resolution of an experimental data image"""
+    shape = sample.shape
+    Vg_res = randint(0, shape[0]//20 + 1) + 1
+    Vds_res = randint(0, shape[1]//20 + 1) + 1
+    new_sample = sample[randint(0, Vg_res)::Vg_res, randint(0, Vds_res)::Vds_res]
+    new_target = target / Vds_res
+    return new_sample, new_target
+
+
 def random_multiply(sample, min, max=None):
     if max is None:
         return sample * min
@@ -147,8 +157,8 @@ def diamond_crop(sample, target_info):
     temp = box[1][1] + floor((box[0][1] - box[1][1])/2 * 0.35)
     Vds_empty_space = int(beta.rvs(1.2, 0.80, 0, temp))
     # print(box)
-    max_Vds = randint(min([box[0][0]+4, target_info['nVg']-1]),
-                      min([target_info['nVg'], box[0][0]+4+(box[0][0]-box[1][0])/2]))
+    max_Vds = randint(min([box[0][0], target_info['nVg']-1]),
+                      min([target_info['nVg'], box[0][0]+(box[0][0]-box[1][0])/2]))
     min_Vds = randint(0, box[1][0])
     newBox = [[max_Vds, target_info['nVds'] - Vds_empty_space],
               [min_Vds, Vds_empty_space],

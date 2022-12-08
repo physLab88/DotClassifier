@@ -5,8 +5,9 @@ import numpy as np
 import yaml
 import os
 import matplotlib.pyplot as plt
+from math import ceil, floor
 
-root_dir = "data/exp_croped/"
+root_dir = "data/exp_box/"
 
 
 def verify_if_files_attached(delete_unattached=False):
@@ -133,10 +134,75 @@ def crop_image():
     return
 
 
+def create_box():
+    """ This function is used to create a box around the first diamond
+    in experimental datafiles so it can be used to do some data-augmentations
+    the coordinates of the box are given in pixel position in this order:
+    [LowerRight, UpperLeft]"""
+    f = open(root_dir + '_data_indexer.yaml', 'r')
+    infos = yaml.load(f, Loader=yaml.FullLoader)
+    print(len(infos))
+    for index in range(len(infos)):
+        info = infos[index]
+        sample_name = root_dir + info['f'] + '.npy'
+        diagram = np.load(sample_name)
+        diagram = np.abs(diagram)
+        diagram[diagram < 2E-14] = 2E-14
+        diagram = np.log(diagram)
+        box = None
+        if 'box' in info:
+            box = info['box']
+        while True:
+            target = info['Ec']
+            pix_h = target / ((info["Vds_range"][1] - info["Vds_range"][0]) / (info["nVds"] - 1))
+            plt.title("pix_h %s, pos %s" % (pix_h, info['nVds']/2-pix_h))
+            plt.imshow(diagram, cmap='hot')
+            if box is not None:
+                plt.gca().add_patch(plt.Rectangle((box[0][0], box[1][1]), box[1][0] - box[0][0],
+                                                  box[0][1] - box[1][1], fc='none', ec="b"))
+            else:
+                print("no box curently")
+            plt.show()
+            is_good = input("Is the box good? (y/n/c):  ")
+            if is_good == 'y':
+                info['box'] = box
+                # save info dict
+                f = open(root_dir + '_data_indexer.yaml', 'w')
+                yaml.dump(infos, f)
+                print('yay')
+                break
+            elif is_good == 'c':
+                # c is for cancel, won't save or change anything of this datapoint
+                break
+            uper_left = input("uper left corner coords:  ")
+            uper_left = uper_left.split()
+            if box is not None:
+                UL = box[1]
+                LR = box[0]
+            else:
+                UL = [0, 0]
+                LR = [1, 1]
+            for i, coord in zip(range(2), uper_left):
+                if coord != '-':
+                    print('changing coord')
+                    UL[i] = int(coord)
+            lower_right = input("lower right corner coords: ")
+            lower_right = lower_right.split()
+            for i, coord in zip(range(2), lower_right):
+                if coord != '-':
+                    print('changing coord')
+                    LR[i] = int(coord)
+            LR[1] = info['nVds'] - UL[1]
+            box = [LR, UL]
+            print(box)
+    return
+
+
 def main():
     # verify_if_files_attached(delete_unattached=False)
     # verify_min_img_size(del_too_small=False)
-    crop_image()
+    # crop_image()
+    create_box()
 
 
 if __name__ == '__main__':
