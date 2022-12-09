@@ -34,6 +34,8 @@ RANDOM_VECT_SIZE = 100
 BACK_FEED = 16
 EXP_DATA_DEGENERANCY = 300
 NUM_DISCRIMINATOR = 1
+RESET_RATE = 7
+TRAIN_SEGMENTATION = 40
 
 EXP_DATA_SIZE = 0
 # global dataloaders
@@ -363,11 +365,11 @@ def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_data
         print("Starting Epoch %s \n ========================================" % (E + 1))
         train_loss = train_loop(train_dataloader, model, loss_fn, optimizer)
         loss = test_loop(test_dataloader, model, loss_fn)
-        log_dic = {"loss": loss, "train loss": train_loss, "epoch": E + init_epoch}
+        log_dic = {"t_loss": loss, "t_train loss": train_loss, "t_epoch": E + init_epoch}
         exp_loss = None
         if exp_dataloader is not None:
             exp_loss = test_loop(exp_dataloader, model, loss_fn)
-            log_dic["exp loss"] = exp_loss
+            log_dic["t_exp loss"] = exp_loss
         wandb.log(log_dic)
         wandb.config.update({"epochs": E + init_epoch}, allow_val_change=True)
         # ------------>>> make a checkpoint
@@ -401,7 +403,7 @@ def basicGANTrainingSequence(disc_model, disc_loss_fn, disc_optimizer,
     for E in range(numEpoch):
         print("Starting Epoch %s \n ========================================" % (E + 1))
         # reset random discriminator and train it?
-        if E % 7 == 0:
+        if E % RESET_RATE == 0:
             discriminators = disc_model().to(device)
 
         i = 0
@@ -418,10 +420,10 @@ def basicGANTrainingSequence(disc_model, disc_loss_fn, disc_optimizer,
             discriminators.zero_grad()
             disc_running_loss += GAN_train_loop(disc_batch, discriminators,
                                                 disc_loss_fn, d_optimiser)
-            if (i+1) % 10 == 0:
+            if (i+1) % TRAIN_SEGMENTATION == 0:
                 loss_fn = lambda pred, y: gan_loss_fn(pred, y, discriminators)
                 gan_model.zero_grad()
-                for j in range(10):
+                for j in range(TRAIN_SEGMENTATION):
                     gan_running_loss += GAN_train_loop(next(iter(gan_dataloader)), gan_model, loss_fn, gan_optimizer, gen=True)
 
             disc_batch = next(disc_iter, None)
@@ -574,12 +576,13 @@ def load_gan_model(model_name, configs=None, branch_training=True, tags=None, tr
     else:
         configs['parent_run'] = model_name
 
-    run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
-                     config=configs, tags=tags)  # notes, tags, group  are other usfull parameters
-
-    if branch_training:
-        wandb.log({"exp_loss": summary['exp_loss'], "Disc_loss": summary['Disc_loss'], "epoch": init_epoch,
-                   "gen_loss": summary['gen_loss']})
+    run = None
+    if train:
+        run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
+                         config=configs, tags=tags)  # notes, tags, group  are other usfull parameters
+        if branch_training:
+            wandb.log({"exp_loss": summary['exp_loss'], "Disc_loss": summary['Disc_loss'], "epoch": init_epoch,
+                       "gen_loss": summary['gen_loss']})
     return run, model, init_epoch + 1, configs
 
 
@@ -678,6 +681,55 @@ class ResLike1_0(nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
+        x = self.relu(x)
+        x = self.sequ1(x)
+        x = self.sequ2(x)
+        x = self.sequ3(x)
+        x = self.sequ4(x)
+        x = self.avgpool(x)
+        x = self.flatten(x)
+        x = self.lin1(x)
+        return x
+
+
+class ResLike4_0(nn.Module):
+    def __init__(self):
+        "no pooling layer"
+        super(ResLike4_0, self).__init__()
+        self.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=True)
+        self.relu = nn.ReLU(inplace=True)
+        self.pool_like1 = nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1, dilation=1)  # replace the pooling layer
+        self.sequ1 = nn.Sequential(
+            Bottleneck(64, 64, 256),
+            Bottleneck(256, 64, 256),
+            Bottleneck(256, 64, 256),
+        )
+        self.sequ2 = nn.Sequential(
+            Bottleneck(256, 128, 512, stride=2),
+            Bottleneck(512, 128, 512),
+            Bottleneck(512, 128, 512),
+            Bottleneck(512, 128, 512),
+        )
+        self.sequ3 = nn.Sequential(
+            Bottleneck(512, 256, 1024, stride=2),
+            Bottleneck(1024, 256, 1024),
+            Bottleneck(1024, 256, 1024),
+            Bottleneck(1024, 256, 1024),
+            Bottleneck(1024, 256, 1024),
+            Bottleneck(1024, 256, 1024),
+        )
+        self.sequ4 = nn.Sequential(
+            Bottleneck(1024, 512, 2048, stride=2),
+            Bottleneck(2048, 512, 2048),
+            Bottleneck(2048, 512, 2048),
+        )
+        self.avgpool = nn.AdaptiveAvgPool2d(output_size=(1, 1))
+        self.flatten = nn.Flatten()
+        self.lin1 = nn.Linear(2048, 1)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.pool_like1(x)
         x = self.relu(x)
         x = self.sequ1(x)
         x = self.sequ2(x)
@@ -1008,30 +1060,37 @@ def test_on_exp(model_name):
     return
 
 
-def train():
+def test_GAN():
     # TODO delete epochs config
     # TODO randomise weights
     # TODO implement parent run everywhere
 
     global ID, RUN_NAME, gan_model
+    gan_model_name = "trim-shape"
     configs = {
-        "learning_rate": 1E-3,
-        "epochs": 100,
+        "disc_architecture": "ResLike2_0",
+        "disc_loss_fn": "mean squared error loss",
+        "disc_optimiser": "Adam",
+        "gan_architecture": "GenNet1_0",
+        "gan_model_name": gan_model_name,
+        "epochs": 1000,
+        "disc_lr": 1E-3,
+        "disc_moment": 0.9,
         "batch_size": BATCH_SIZE,
-        "architecture": "ResLike2_0",  # modified when loaded
-        "pretrained": True,  # modified when loaded
-        "loss_fn": "mean squared error loss",
-        "optimiser": "Adam",
         "data_used": "3.0 black_square_minimalist",
         "data_size": len(sim_dataloaders['train'].dataset),
         "valid_size": len(sim_dataloaders['valid'].dataset),
         "exp_data_size": len(exp_dataloader.dataset),
-        "running_stats": False,
+        "info": 'debug',
     }
     tags = ['ResLike2_0']
     print('Dataset train size = %s' % len(sim_datasets['train']))
 
     # ======================= BUILDING MODEL AND WANDB =======================
+    # gan model
+    trash1, gan_model, trash2, configs = load_gan_model(gan_model_name, configs, train=False)
+    del trash1, trash2
+    # fitting model
     model_name = None
     branch_training = True  # always True unless continuing a checkpoint
     if model_name is None:
@@ -1039,14 +1098,14 @@ def train():
         model = model.to(device)
 
         run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
-                         config=configs, tags=tags)  # notes, tags, group are other usfull parameters
+                         config=configs, tags=tags, group="validation")  # notes, tags, group are other usfull parameters
         init_epoch = 1
     else:
         run, model, init_epoch, configs = load_model(model_name, configs, branch_training=branch_training, tags=tags)
 
     # ----------------->>> loss and optimisers
     loss_fn = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=configs['learning_rate'])
+    optimizer = torch.optim.Adam(model.parameters(), configs['disc_lr'], (configs['disc_moment'], 0.999))
 
     # ----------------->>> training the network
     RUN_NAME = run.name
@@ -1070,6 +1129,8 @@ def train_GAN():
         "disc_lr": 0.0002,
         "disc_moment": 0.5,
         "batch_size": BATCH_SIZE,
+        "reset_rate": RESET_RATE,
+        "train_segm": TRAIN_SEGMENTATION,
         "data_used": "3.0 black_square_minimalist",
         "data_size": len(sim_dataloaders['train'].dataset),
         "valid_size": len(sim_dataloaders['valid'].dataset),
@@ -1081,7 +1142,7 @@ def train_GAN():
 
     # ======================= BUILDING MODEL AND WANDB =======================
     disc_model = ResLike1_0
-    model_name = None  # gan model name
+    model_name = "trim-shape"  # gan model name
     branch_training = True  # always True unless continuing a checkpoint
     if model_name is None:
         gan_model = GenNet1_0().to(device)
@@ -1119,6 +1180,7 @@ def main():
     valid_dataloader = DataLoader(GenDataset(sim_datasets['valid']),
                                  batch_size=BATCH_SIZE, shuffle=True)
 
+    # test_GAN()
     train_GAN()
     # get_input_stats(img_dataloaders['valid'], title='valid mean')
     # get_input_stats(exp_dataloader,  title='exp mean')
