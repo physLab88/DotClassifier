@@ -35,7 +35,7 @@ ENTITY = "3it_dot_classifier"  # WandB entity
 device = "cuda" if torch.cuda.is_available() else "cpu"  # use GPU if you can
 print(f"Using {device} device")
 DIRECTORY = "data/sim3_0/"  # simulated data directory
-EXP_DIRECTORY = "data/exp_croped/"  # exp data directorry
+EXP_DIRECTORY = "data/exp_box/"  # exp data directorry
 BATCH_SIZE = 16
 DROPOUT = 0.30  # used if using dropout layers
 NUM_GROUPS = 4  # used if using groupe norm
@@ -80,7 +80,7 @@ class StabilityDataset(Dataset):
         target = torch.FloatTensor([self.info[idx]['Ec']])
         # here, we define the target Ec in Vds_pixels
         target = target / ((target_info["Vds_range"][1] - target_info["Vds_range"][0]) / (target_info["nVds"] - 1))
-        target /= (target_info["nVds"] - 1)  # if you want to normalise to image height
+        # target /= (target_info["nVds"] - 1)  # if you want to normalise to image height
 
         # ----------------->>> data augmentation
         # ---> threshold current
@@ -103,7 +103,8 @@ class StabilityDataset(Dataset):
         sample = di.random_multiply(sample, np.exp(beta.rvs(2.8, 3.7, -28, 8.5)))
 
         # ----------------->>> formatting the data
-        sample = di.black_square(sample)
+        sample, mask = di.black_square(sample)
+        del mask
         sample = di.clip_current(sample, 2E-14, 1E-7)
         sample = np.log(np.abs(sample))
         # sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
@@ -126,7 +127,7 @@ class ExperimentalDataset(Dataset):
         root_dir (string): Directory of the dataset.
         transform (callable, optional): Optional transform to be applied
                 on a sample.
-                target_transform: Optional transform to be aplied on target
+        target_transform: Optional transform to be aplied on target
         """
         f = open(root_dir + '_data_indexer.yaml', 'r')
         self.info = yaml.load(f, Loader=yaml.FullLoader)  # loading the dic with the targets and other info of samples
@@ -159,9 +160,12 @@ class ExperimentalDataset(Dataset):
         sample, newBox = di.diamond_crop(sample, target_info)  # or diamond crop
         # ---> resolution change
         # sample, target = di.change_res(sample, target)
+        # ---> random scale
+        # sample = di.random_multiply(sample, 0.5, 1.75)  # random scale
 
         # ----------------->>> formating the data
-        sample = di.black_square(sample)
+        sample, mask = di.black_square(sample)
+        del mask
         sample = di.clip_current(sample, 2E-14, 1E-7)
         sample = np.log(np.abs(sample))
         # sample = np.repeat(sample[:, :, None], 3, axis=2)  # to use with resnet50
@@ -291,7 +295,6 @@ def test_loop(dataloader, model, loss_fn):
                 pred = model(X)
                 test_loss += loss_fn(pred, y).item()
                 i += 1
-                # print('v %s' % i)
     test_loss /= size * 3
     print(f"Avg loss: {test_loss:>8f} \n")
     return test_loss
@@ -587,7 +590,8 @@ def analise_network(model_name, datatype='valid'):
     dependance between the error and other parameters.
     This function Logs the results in WandB
 
-    this is however only used for simulated data files"""
+    this is however only used for simulated data files
+    Note!!!: the data must be using batch of 1"""
     dataloader = sim_dataloaders[datatype]
     infos = sim_datasets[datatype].info
     loss_fn = nn.MSELoss()
@@ -768,7 +772,10 @@ def test_on_exp(model_name):
 
 
 def train():
-# TODO implement checkpoint (right now, you can only branch training, wich does the trick)
+    """ Call this function in your main to train a network. it will run
+    the training sequence based on the parameters you have set inside
+    this function"""
+    # TODO implement checkpoint (right now, you can only branch training, wich does the trick)
     global ID, RUN_NAME, BATCH_SIZE, sim_dataloaders, exp_dataloader
     # =========================== CONFIGURATIONS =================================
     # NOTE: some configs are in the GLOBAL section at the top of the code
@@ -802,7 +809,7 @@ def train():
         model = model.to(device)
 
         run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
-                         config=configs, tags=tags)  # notes, tags, group are other usfull parameters
+                         config=configs, tags=tags, group='debug')  # notes, tags, group are other usfull parameters
         init_epoch = 1
     else:
         # ---> load a model
@@ -835,8 +842,8 @@ def main():
     # lookAtData(sim_dataloaders['train'], sim_datasets['train'].info, 4, 8)
     # look_at_exp()
     train()
-    # test_on_exp("dark-firebrand")
-    # analise_network("olive-surf", 'valid')
+    # test_on_exp("wild-yogurt")
+    # analise_network("wild-yogurt", 'valid')
 
 
 if __name__ == '__main__':

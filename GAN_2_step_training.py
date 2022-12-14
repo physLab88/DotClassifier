@@ -1,3 +1,6 @@
+""" Author: Michael Bedard
+This Code is to test a GAN approach. specifically, it tests the
+wierd GAN approach I thought of and explained in the word document"""
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
@@ -26,31 +29,31 @@ PROJECT = 'GAN_2_step'
 ENTITY = "3it_dot_classifier"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using {device} device")
-DIRECTORY = "data/sim3_0/"
-EXP_DIRECTORY = "data/exp_box/"
+DIRECTORY = "data/sim3_0/"          # simulated data directorry
+EXP_DIRECTORY = "data/exp_box/"     # experimental data directorry
 BATCH_SIZE = 32
-RANDOM_CROP = True
+# ------------->>> GAN parameters
 RANDOM_VECT_SIZE = 100
-BACK_FEED = 16
-EXP_DATA_DEGENERANCY = 300
-NUM_DISCRIMINATOR = 1
-RESET_RATE = 7
-TRAIN_SEGMENTATION = 40
+BACK_FEED = 16                      # number of backfeed layers (in the network definition)
+EXP_DATA_DEGENERANCY = 300          # number of times exp data is repeated in the disc dataloader
+RESET_RATE = 7                      # number of epoch befor we reset the disc network
+TRAIN_SEGMENTATION = 40             # number of batch to train the disc before training the generator
 
-EXP_DATA_SIZE = 0
-# global dataloaders
+# -------------- >>> global dataloaders
 exp_dataloader = None
 sim_dataloaders = None
 disc_dataloader = None
 gan_dataloader = None
 valid_dataloader = None
-# global models
+# -------------- >>> global models
 discriminators = None
 gan_model = None
+
+
 # ======================= SETTING UP DATASET ========================
-# ---------------->>> DATALOADER
+# ---------------->>> DATALOADER CLASSES
 class StabilityDataset(Dataset):
-    """ Class that allows to retreive the training and validation data"""
+    """ dataset class that allows to retreive simulated data"""
 
     def __init__(self, root_dir, transform=None, target_transform=None):
         """
@@ -69,52 +72,48 @@ class StabilityDataset(Dataset):
         return len(self.info)
 
     def __getitem__(self, idx):
+        """ returns the sample and target at index idx"""
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
+        # ----------------->>> loading the sample
         sample_name = self.root_dir + self.info[idx]['f'] + '.npy'
         sample = np.load(sample_name)
         sample = np.float32(sample)
-
-        target = torch.FloatTensor([self.info[idx]['Ec']])
         target_info = self.info[idx]
+        target = torch.FloatTensor([self.info[idx]['Ec']])
         # here, we define the target Ec in Vds_pixels
         target = target / ((target_info["Vds_range"][1] - target_info["Vds_range"][0]) / (target_info["nVds"] - 1))
+        # target /= (target_info["nVds"] - 1)  # if you want to normalise to image height
 
-        # threshold current
-        # sample = di.threshold_current(sample, target_info)
-        # 3D map
-        # sample = np.log(np.abs(di.clip_current(sample, 2E-14)))
-        # sample = di.low_freq_3DMAP(sample, target_info)
-        # sample = np.exp(sample)
-
-        # random crop:
-        newBox = []
-        # sample, newBox = di.random_crop(sample, target_info)
-        sample, newBox = di.diamond_crop(sample, target_info)
-        newBox = torch.IntTensor(newBox)
-
-        # scaling
+        # ----------------->>> data augmentation
+        # ---> crop
+        # sample, newBox = di.random_crop(sample, target_info)  # random crop
+        sample, newBox = di.diamond_crop(sample, target_info)  # or diamond crop
+        # ---> scaling
         sample = di.random_multiply(sample, np.exp(beta.rvs(2.8, 3.7, -28, 8.5)))
-        # black square
+
+        # ----------------->>> formatting the data
         sample, mask = di.black_square(sample)
         mask = torch.BoolTensor(mask)
-        # clip
         sample = di.clip_current(sample, 2E-14, 1E-7)
         sample = np.log(np.abs(sample))
         sample = sample.astype('float32')
+
+        # ----------------->>>  other transforms
         if self.transform:
             sample = self.transform(sample)
         if self.target_transform:
             target = self.target_transform(target)
+        # ---> matching the mask # of dimentions to sample # of dimentions
         if len(sample.size()) == 3:
             mask = mask[None,]
         # print(sample.size())
-        return sample, target, idx, mask
+        return sample, target, idx, mask  # we return the idx for analisis
 
 
 class ExperimentalDataset(Dataset):
-    """ Class that allows to retreive the training and validation data"""
+    """ dataset class that allows to retreive the experimental data"""
 
     def __init__(self, root_dir, transform=None, target_transform=None):
         """
@@ -133,43 +132,60 @@ class ExperimentalDataset(Dataset):
         return len(self.info)
 
     def __getitem__(self, idx):
+        """ returns the sample and target at index idx"""
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
+        # ----------------->>> loading the sample
         sample_name = self.root_dir + self.info[idx]['f'] + '.npy'
         sample = np.load(sample_name)
         sample = np.float32(sample)
-
-        target = torch.FloatTensor([self.info[idx]['Ec']])
         target_info = self.info[idx]
+        target = torch.FloatTensor([self.info[idx]['Ec']])
         # here, we define the target Ec in Vds_pixels
         target = target / ((target_info["Vds_range"][1] - target_info["Vds_range"][0]) / (target_info["nVds"] - 1))
+        # target /= (target_info["nVds"] - 1)  # if you want to normalise to image height
 
-        # data augmentation
+        # ----------------->>> data augmentation
+        # ---> crop
         sample, newBox = di.diamond_crop(sample, target_info)  # diamond crop
-        newBox = torch.IntTensor(newBox)
+        # ---> resolution change
         # sample, target = di.change_res(sample, target)  # change resolution
+        # ---> random scale
         sample = di.random_multiply(sample, 0.5, 1.75)  # random scale
 
-
+        # ----------------->>> formating the data
         sample, mask = di.black_square(sample)
         mask = torch.BoolTensor(mask)
         sample = di.clip_current(sample, 2E-14, 1E-7)
-
         sample = np.log(np.abs(sample))
         sample = sample.astype('float32')
+
+        # ----------------->>>  other transforms
         if self.transform:
             sample = self.transform(sample)
         if self.target_transform:
             target = self.target_transform(target)
-        # print(sample.size())
+        # ---> matching the mask # of dimentions to sample # of dimentions
         if len(sample.size()) == 3:
             mask = mask[None,]
         return sample, target, idx, mask
 
 
 class GenDataset(Dataset):
+    """ This is a dataset that the generator model would generate. it can also be
+    mixed with some experimental data. This dataloader uses the global 'gan_model'
+    to generate new samples"""
     def __init__(self, sim_dataset, exp_dataset=None, transform=None, target_transform=None):
+        """
+        sim_dataset: a simulation dataset that our gen model will use to generate
+            some new data
+        exp_dataset: an experimental dataset if we want to mix experimental data with
+            generated data. leave None if you want only generated data
+        transform (callable, optional): Optional transform to be applied
+                on a sample.
+        target_transform: Optional transform to be aplied on target
+        """
         self.sim_dataset = sim_dataset
         self.sim_len = len(sim_dataset)
         self.exp_dataset = exp_dataset
@@ -184,21 +200,27 @@ class GenDataset(Dataset):
         return self.sim_len + EXP_DATA_DEGENERANCY*self.exp_len
 
     def __getitem__(self, idx):
+        """ returns the sample and target at index idx"""
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
+        # experimental data have the lower indexes, generated data have the larger indexes
         if idx < EXP_DATA_DEGENERANCY*self.exp_len:
+            # ---> experimental data
             sample, target, idx, mask = self.exp_dataset[idx%self.exp_len]
             sample = sample.to(device)
-            idx = -(idx + 1)  # in my convention, index is negative if it represents an exp data
+            idx = -(idx + 1)  # in my convention, the returned index is negative if it represents an exp data
         else:
+            # ---> generated data
             sample, target, idx, mask = self.sim_dataset[idx - EXP_DATA_DEGENERANCY*self.exp_len]
             sample = sample.to(device)
-            # with torch.no_grad():
+
             batch = int(sample.size()[0])
             rand_vect = torch.normal(1, 0, size=[batch, RANDOM_VECT_SIZE], device=device)
-            sample = gan_model(sample, rand_vect)
-            sample[mask==False] = np.log(2E-14)
+            sample = gan_model(sample, rand_vect)  # generate the data
+            sample[mask==False] = np.log(2E-14)    # put the black square back
+
+        # ----------------->>>  other transforms
         if self.transform:
             sample = self.transform(sample)
         if self.target_transform:
@@ -206,6 +228,7 @@ class GenDataset(Dataset):
         return sample, target, idx, mask
 
 
+# ---------------->>> defining other transforms
 data_transforms = {'train': transforms.Compose([
     transforms.ToTensor(),
     transforms.RandomVerticalFlip(),
@@ -217,21 +240,32 @@ data_transforms = {'train': transforms.Compose([
         # transforms.RandomAffine(degrees=0, translate=(0.1, 0.025)),
     ]),
 }
-exp_transform = transforms.Compose([transforms.ToTensor()])
-# transforms.GaussianBlur(kernel_size[, sigma])
 data_target_transforms = {'train': None,
                           'valid': None,
                           }
 
+exp_transform = transforms.Compose([transforms.ToTensor(),
+                                    transforms.RandomVerticalFlip(),])
+
+
 folders = {'train': 'train/',
            'valid': 'valid/', }
+# ----------->>> defining the non generated datasets
 sim_datasets = {
     key: StabilityDataset(root_dir=DIRECTORY + folders[key], transform=data_transforms[key],
                           target_transform=data_target_transforms[key]) for key in data_transforms}
 exp_dataset = ExperimentalDataset(root_dir=EXP_DIRECTORY, transform=exp_transform)
 
 
+# ============================== TOOLS ==============================
 def lookAtData(dataloader, info, nrows=1, ncols=1, show=True):
+    """ This function allows you to look at manny data at a time.
+        it is meant to be modified if you need to.
+        dataloader: the dataloader from which you wish to look at
+        info: the self.info dic of the dataloader
+        nrows: the number of image rows in the output graph
+        ncols: the number of image columns in the graph
+        show: wether or not to show the plot"""
     fig, axs = plt.subplots(nrows, ncols, sharex=True, sharey=True)
     info = info[0]
     Vg = info['Vg_range']
@@ -240,21 +274,16 @@ def lookAtData(dataloader, info, nrows=1, ncols=1, show=True):
         axs[i, 0].set_ylabel(r'$V_{ds}$ in mV')
         for j in range(ncols):
             plt.sca(axs[i, j])
-            diagrams, labels, idx, mask = next(iter(dataloader))
-            # print(diagrams[0].size())
-            index = np.random.randint(0, BATCH_SIZE)
 
+            # loading a random file (does not work if BATCH_SIZE = 1, I think
+            diagrams, labels, idx, mask = next(iter(dataloader))
+            index = np.random.randint(0, BATCH_SIZE)
             diagram = diagrams[index][0]
-            diagram = diagram.cpu().detach()
+            diagram = diagram.cpu().detach()  # data needs to be on cpu to plot
             size = diagram.size()
-            # print(size)
-            # Imin = diagram[:floor(size[0]/2)-2, :].min()
-            # print(np.log(Imin))
-            # diagram = di.clip_current(diagram, Imin)
 
             plt.title('Pix_height: %s' % '{:2f}'.format(float(labels[index])))
             plt.imshow(diagram, aspect=1, cmap='hot')  # extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]]
-            # plt.xlim([0, 290])
     for j in range(ncols):
         axs[-1, j].set_xlabel(r'$V_g$ in mV')
     # plt.tight_layout()
@@ -264,6 +293,10 @@ def lookAtData(dataloader, info, nrows=1, ncols=1, show=True):
 
 
 def look_at_exp():
+    """ This function allows to visualise each experimental data
+        one diagram at a time. note that is actually creates a new exp
+        dataloader from the global exp_dataset and does not use the global
+        exp_dataloader"""
     dataloader = DataLoader(exp_dataset, batch_size=1, shuffle=False)
     infos = exp_dataset.info
     for diagram, label, index, mask in dataloader:
@@ -273,12 +306,34 @@ def look_at_exp():
         Vg = info['Vg_range']
         Vds = info['Vds_range']
         plt.title('Ec: %s meV  pixel height %s' % ('{:2f}'.format(float(info['Ec'])), '{:2f}'.format(float(label))))
-        plt.imshow(diagram, aspect=1, cmap='hot') #, extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]])
+        plt.imshow(diagram, aspect=1, cmap='hot')  # , extent=[Vg[0], Vg[-1], Vds[0], Vds[-1]])
         plt.show()
 
 
-# ==================== TRAINING AND TESTING ====================
+def get_input_stats(dataloader, multiplot=False, title=''):
+    """this function analises the statistics of anny dataloader.
+    it is meant to be modified"""
+    means = []
+    stds = []
+    for i in range(3):
+        for X, y, index in dataloader:
+            means.append(X.mean())
+            stds.append(X.std())
+    plt.hist(stds)
+    plt.title(title)
+    if not multiplot:
+        plt.show()
+    return
+
+
+# ============= TRAIN/TEST BACKGROUND FUNCTIONS =============
 def test_loop(dataloader, model, loss_fn):
+    """ This function loops 3 times over the dataloader to mesure the loss.
+    it is usefull when you want to log your fit over your validation data
+    and over your experimental data
+    dataloader: anny dataloader you want to test your model on
+    model: your trained model
+    loss_fn: the loss function to use during the test"""
     print("=========== Evaluating model ===========")
     size = len(dataloader.dataset)
     num_batches = len(dataloader)
@@ -293,13 +348,20 @@ def test_loop(dataloader, model, loss_fn):
                 pred = model(X)
                 test_loss += loss_fn(pred, y).item()
                 i += 1
-                # print('v %s' % i)
     test_loss /= num_batches * 3
     print(f"Avg loss: {test_loss:>8f} \n")
     return test_loss
 
 
 def train_loop(dataloader, model, loss_fn, optimizer, gen=False):
+    """ This function is essentially the same as in 'LazyEcMesure.py'.
+        it is used in the 'test_GAN' function
+        it loops over the dataloader and trains the model exactly 1 epoch.
+        dataloader: the training data to use
+        model: the model to train
+        loss_fn: the loss function to minimise
+        optimiser: the algorythm that will optimise the model
+        gen: wether the model we are training is a generator or a discriminator"""
     size = len(dataloader.dataset)
     i = 0
     cron.start('train_print')
@@ -307,7 +369,7 @@ def train_loop(dataloader, model, loss_fn, optimizer, gen=False):
     for batch, (X, y, index, mask) in enumerate(dataloader):
         X = X.to(device)
         y = y.to(device)
-        # Compute prediction and loss
+        # ---> Compute prediction and loss
         if gen:
             batch_ = int(X.size()[0])
             rand_vect = torch.normal(1, 0, size=[batch_, RANDOM_VECT_SIZE], device=device)
@@ -317,12 +379,13 @@ def train_loop(dataloader, model, loss_fn, optimizer, gen=False):
         loss = loss_fn(pred, y)
         running_loss += loss
 
-        # Backpropagation
+        # ---> Backpropagation
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         i += 1
 
+        # ---> printing timer
         if cron.t('train_print') >= 10.0:
             cron.start('train_print')
             current = (batch + 1) * len(X)
@@ -334,12 +397,23 @@ def train_loop(dataloader, model, loss_fn, optimizer, gen=False):
 
 
 def GAN_train_loop(batch, model, loss_fn, optimizer, gen=False):
+    """ This function is used in the 'train_GAN' function. it is used
+    to train the GAN. unlike the 'train_loop' function, it does not
+    loop over an entier epoch. instead, it trains the given model on
+    exactly one batch, which is given as the first argument.
+    NOTE: this function can train the generator and the discriminator.
+    batch: the batch of data to train on. feed it as is, as a tupple with
+        the arguments being: (X, y, index, mask)
+    model: the model to train
+    loss_fn: the loss function to minimise
+    optimiser: the algorithm used to train the model
+    gen: True if the model is a generator, False if it is a discriminator"""
     X, y, index, mask = batch
     size = len(index)
 
     X = X.to(device)
     y = y.to(device)
-    # Compute prediction and loss
+    # ---> Compute prediction and loss
     if gen:
         rand_vect = torch.normal(1, 0, size=[size, RANDOM_VECT_SIZE], device=device)
         pred = model(X, rand_vect)
@@ -347,7 +421,7 @@ def GAN_train_loop(batch, model, loss_fn, optimizer, gen=False):
         pred = model(X)
     loss = loss_fn(pred, y)
 
-    # Backpropagation
+    # ---> Backpropagation
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
@@ -356,15 +430,33 @@ def GAN_train_loop(batch, model, loss_fn, optimizer, gen=False):
 
 def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_dataloader, numEpoch, init_epoch=1,
                           exp_dataloader=None):
-    # TODO initial assestement
+    """ This function is the same as in the 'LazyEcMesure.py'. it is used in the
+    test_GAN function, to verify that the generator generates data representative
+    of the experimental data.
+    this function takes care of evreything that needs to be done during training:
+    training, testing, logging to WandB, saving the model and etc.
+    it will train the model numEpoch epoch.
+
+    model: the model to train
+    loss_fn: the loss function to minimise
+    train_dataloader: the simulated dataloader to use during training
+    test_dataloader: the simulated dataloader to use during validation
+    exp_dataloader: the dataloader to use during validation, to verify if exp converges
+        if None, skips the exp data validation
+    numEpoch: the number of epoch to train for
+    init_epoch: the model's starting epoch (used when loading a previously trained model)
+    """
     # TODO continue run / checkpoint ???
     best = None
     best_summary = {}
     # ------------->>> training loop
     for E in range(numEpoch):
         print("Starting Epoch %s \n ========================================" % (E + 1))
+        # ---> training a new epoch
         train_loss = train_loop(train_dataloader, model, loss_fn, optimizer)
         loss = test_loop(test_dataloader, model, loss_fn)
+
+        # ---> loging points to WandB
         log_dic = {"t_loss": loss, "t_train loss": train_loss, "t_epoch": E + init_epoch}
         exp_loss = None
         if exp_dataloader is not None:
@@ -372,40 +464,55 @@ def basicTrainingSequence(model, loss_fn, optimizer, train_dataloader, test_data
             log_dic["t_exp loss"] = exp_loss
         wandb.log(log_dic)
         wandb.config.update({"epochs": E + init_epoch}, allow_val_change=True)
-        # ------------>>> make a checkpoint
-        # ---> save report
-        # ---> save optim
-        # ---> save best model
+
+        # ---> verify if we got a new best fit
         if best is None or loss <= best:
+            # ---> update the summary with the current best values
             best = loss
             best_summary["epoch"] = E + init_epoch
             best_summary["loss"] = loss
             best_summary["train loss"] = train_loss
             if exp_dataloader is not None:
                 best_summary["exp loss"] = exp_loss
+            for key in best_summary:
+                wandb.run.summary[key] = best_summary[key]
 
+            # ---> save the new best model
             model_scripted = torch.jit.script(model)  # Export to TorchScript
             model_scripted.save(NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')  # Save
-        # update the summary with the current best values
-        for key in best_summary:
-            wandb.run.summary[key] = best_summary[key]
-    # ------------>>> final save
-    # ---> save report
-    # ---> save model
-    # model_scripted = torch.jit.script(model)  # Export to TorchScript
-    # model_scripted.save(NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')  # Save
+    return
 
 
 def basicGANTrainingSequence(disc_model, disc_loss_fn, disc_optimizer,
                              gan_loss_fn, gan_optimizer, numEpoch, init_epoch=1):
+    """ this function takes care of evrything that needs to be done during training
+    of the GAN network:
+    training, testing, logging to WandB, saving the model and etc.
+    it will train the generator numEpoch epoch.
+
+    disc_model: the discriminator model CLASS (not an instance). the class is necessarry
+        as we reset the discriminator model several times during training
+    disc_loss_fn: the loss function to minimise during training of the discriminator
+    disc_optimiser: the disc optimiser CLASS (not an instance) during training
+        of the discriminator. this is necessary to set the optimiser parameters during
+        training when we reset the model
+    gan_loss_fn: a custom loss function that takes in the prediction, the label and
+        a discriminator model as input. it is used to evaluate the loss during the
+        training of the generator
+    gan_optimiser: the optimiser to use to optimise the generator
+    numEpoch: the number of epoch to train for
+    init_epoch: the model's starting epoch (used when loading a previously trained model)
+    """
+
     global discriminators, gan_model
     discriminators = disc_model().to(device)
     for E in range(numEpoch):
         print("Starting Epoch %s \n ========================================" % (E + 1))
-        # reset random discriminator and train it?
+        # ---> reset discriminator every RESET_RATE epoch
         if E % RESET_RATE == 0:
             discriminators = disc_model().to(device)
 
+        # ---> preparing to train 1 epoch
         i = 0
         cron.start('train_print')
         log_dic = {"epoch": E + init_epoch}
@@ -416,52 +523,44 @@ def basicGANTrainingSequence(disc_model, disc_loss_fn, disc_optimizer,
         disc_iter = iter(disc_dataloader)
         disc_batch = next(disc_iter, None)
         d_optimiser = disc_optimizer(discriminators.parameters())
-        while disc_batch is not None:
+        while disc_batch is not None:  # loop over the entirer disc_dataloader once
+            # ---> training discriminator
             discriminators.zero_grad()
             disc_running_loss += GAN_train_loop(disc_batch, discriminators,
                                                 disc_loss_fn, d_optimiser)
+
+            # here we train the gen for "TRAIN_SEGMENTATION" batch after every "TRAIN_SEGMENTATION"
+            # batch we trained the discriminator
             if (i+1) % TRAIN_SEGMENTATION == 0:
                 loss_fn = lambda pred, y: gan_loss_fn(pred, y, discriminators)
                 gan_model.zero_grad()
                 for j in range(TRAIN_SEGMENTATION):
+                    # ---> training generator
                     gan_running_loss += GAN_train_loop(next(iter(gan_dataloader)), gan_model, loss_fn, gan_optimizer, gen=True)
 
             disc_batch = next(disc_iter, None)
             i += 1
+            # ---> progress printing (freezes when training discriminator)
             if cron.t('train_print') >= 10.0:
                 cron.start('train_print')
                 current = i * BATCH_SIZE
                 temp = current / size
                 bar = '[' + int(temp * 30) * '#' + int((1 - temp) * 30) * '-' + ']'
                 print("loss: {loss:.5f}  {bar:>} {perc:.2%}".format(loss=disc_running_loss / current, bar=bar, perc=temp))
+        # --------------> logging data to WandB
         cron.stop('train_print')
         log_dic['exp_loss'] = test_loop(exp_dataloader, discriminators, disc_loss_fn)
         log_dic['Disc_loss'] = disc_running_loss/size
         log_dic['gen_loss'] = gan_running_loss/size
-        # generating figures
+        # ---> generating figures to see samples progression
         gen_fig = lookAtData(valid_dataloader, sim_datasets['valid'].info, 4, 8, show=False)
         log_dic["gen_fig"] = gen_fig
         wandb.log(log_dic)
-        plt.close()
+        plt.close()  # free up the plots
 
         # ------------------------ SAVE_MODEL --------------------------
         model_scripted = torch.jit.script(gan_model)  # Export to TorchScript
         model_scripted.save(GEN_NETWORK_DIRECTORY + RUN_NAME + '_' + ID + '.pt')
-
-        """
-        # ------------------------ TEST_MODEL --------------------------
-        if (E+1) % 8 == 0:
-            # to test the model, we train the model and valid it on exp data and valid data
-            model = disc_model().to(device)
-            valid_num = 5
-            optimiser = disc_optimizer(model.parameters())
-            for j in range(valid_num):
-                train_loss = train_loop(gan_dataloader, model, disc_loss_fn, optimiser)
-                loss = test_loop(valid_dataloader, model, disc_loss_fn)
-                exp_loss = test_loop(exp_dataloader, model, disc_loss_fn)
-                log_dic = {"loss": loss, "train loss": train_loss, "exp loss":exp_loss,
-                           "epoch": E + init_epoch + j/valid_num/2}
-                wandb.log(log_dic)"""
     return
 
 
@@ -483,6 +582,7 @@ def load_model(model_name, configs=None, branch_training=True, tags=None, train=
 
     # ---------------->>> Loading the model
     model_file_id = None
+    # ---> finding the model's file
     for filename in os.listdir(NETWORK_DIRECTORY):
         f = os.path.join(NETWORK_DIRECTORY, filename)
         # checking if it is a file
@@ -492,6 +592,7 @@ def load_model(model_name, configs=None, branch_training=True, tags=None, train=
                 break
     if model_file_id is None:
         raise 'model_name= %s not found in %s directory' % (model_name, NETWORK_DIRECTORY)
+    # ---> actually loading the model
     model = torch.jit.load(NETWORK_DIRECTORY + model_file_id + '.pt')
     if train:
         model.train()
@@ -499,24 +600,28 @@ def load_model(model_name, configs=None, branch_training=True, tags=None, train=
         model.eval()
     model = model.to(device)
 
+    # -------------->>> updating some configs using the previous configs
     api = wandb.Api()
     run_id = model_file_id[model_file_id.find('_') + 1:]
     temp_run = api.run("{entity}/{project}/{run_id}".format(entity=ENTITY, project=PROJECT, run_id=run_id))
     prev_config = temp_run.config
     summary = temp_run.summary
 
+    init_epoch = summary['epoch']
     if configs is None:
         configs = prev_config
     else:
         configs['architecture'] = prev_config['architecture']
         configs['pretrained'] = prev_config['pretrained']
-    init_epoch = summary['epoch']
+
+    # ---> copying the previous ID if don't branch training
     if not branch_training:
         ID = model_file_id[model_file_id.find('_') + 1:]
         print('ID %s' % ID)
     else:
         configs['parent_run'] = model_name
 
+    # ---> Creating a new WandB run
     run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
                      config=configs, tags=tags)  # notes, tags, group  are other usfull parameters
 
@@ -526,7 +631,7 @@ def load_model(model_name, configs=None, branch_training=True, tags=None, train=
 
 
 def load_gan_model(model_name, configs=None, branch_training=True, tags=None, train=True):
-    ''' This function allows to load previous neural nets
+    ''' This function allows to load previously trained generators
         filepath: the name of the model (this model must be in the
                   NETWORK_DIRECTORY directory)
         configs: the current training run configurations. some of these
@@ -537,21 +642,23 @@ def load_gan_model(model_name, configs=None, branch_training=True, tags=None, tr
                          that network. if trained, the new network will be
                          saved on top of this network. if True, will branch
                          out the network and create a new ID for the network
-        train: wether or not load the model in train mode or eval mode'''
+        train: wether or not load the model in train mode or eval mode. also,
+            wether or not to initiate a new WandB run'''
     # TODO checkpoint resume
     global ID
 
     # ---------------->>> Loading the model
     model_file_id = None
+    # ---> finding the model's file
     for filename in os.listdir(GEN_NETWORK_DIRECTORY):
         f = os.path.join(GEN_NETWORK_DIRECTORY, filename)
-        # checking if it is a file
         if os.path.isfile(f):
             if filename.find(model_name) != -1:
                 model_file_id = filename[0:filename.find('.')]
                 break
     if model_file_id is None:
         raise 'model_name= %s not found in %s directory' % (model_name, GEN_NETWORK_DIRECTORY)
+    # ---> actually loading the model
     model = torch.jit.load(GEN_NETWORK_DIRECTORY + model_file_id + '.pt')
     if train:
         model.train()
@@ -559,17 +666,20 @@ def load_gan_model(model_name, configs=None, branch_training=True, tags=None, tr
         model.eval()
     model = model.to(device)
 
+    # -------------->>> updating some configs using the previous configs
     api = wandb.Api()
     run_id = model_file_id[model_file_id.find('_') + 1:]
     temp_run = api.run("{entity}/{project}/{run_id}".format(entity=ENTITY, project=PROJECT, run_id=run_id))
     prev_config = temp_run.config
     summary = temp_run.summary
 
+    init_epoch = summary['epoch']
     if configs is None:
         configs = prev_config
     else:
         configs['gan_architecture'] = prev_config['gan_architecture']
-    init_epoch = summary['epoch']
+
+    # ---> copying the previous ID if don't branch training
     if not branch_training:
         ID = model_file_id[model_file_id.find('_') + 1:]
         print('ID %s' % ID)
@@ -577,6 +687,7 @@ def load_gan_model(model_name, configs=None, branch_training=True, tags=None, tr
         configs['parent_run'] = model_name
 
     run = None
+    # ---> Creating a new WandB run if in training mode
     if train:
         run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
                          config=configs, tags=tags)  # notes, tags, group  are other usfull parameters
@@ -586,21 +697,8 @@ def load_gan_model(model_name, configs=None, branch_training=True, tags=None, tr
     return run, model, init_epoch + 1, configs
 
 
-def get_input_stats(dataloader, multiplot=False, title=''):
-    means = []
-    stds = []
-    for i in range(3):
-        for X, y, index in dataloader:
-            means.append(X.mean())
-            stds.append(X.std())
-    plt.hist(stds)
-    plt.title(title)
-    if not multiplot:
-        plt.show()
-    return
-
-
-# =================== CREATING A CUSTOM MODEL ==================
+# ========================= CREATING A CUSTOM MODEL =========================
+# ----------------------------- Discriminator -------------------------------
 class Bottleneck(nn.Module):
     def __init__(self, in_planes, mid_planes, out_planes, bias=True, stride=1):
         super(Bottleneck, self).__init__()
@@ -692,56 +790,9 @@ class ResLike1_0(nn.Module):
         return x
 
 
-class ResLike4_0(nn.Module):
-    def __init__(self):
-        "no pooling layer"
-        super(ResLike4_0, self).__init__()
-        self.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=True)
-        self.relu = nn.ReLU(inplace=True)
-        self.pool_like1 = nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1, dilation=1)  # replace the pooling layer
-        self.sequ1 = nn.Sequential(
-            Bottleneck(64, 64, 256),
-            Bottleneck(256, 64, 256),
-            Bottleneck(256, 64, 256),
-        )
-        self.sequ2 = nn.Sequential(
-            Bottleneck(256, 128, 512, stride=2),
-            Bottleneck(512, 128, 512),
-            Bottleneck(512, 128, 512),
-            Bottleneck(512, 128, 512),
-        )
-        self.sequ3 = nn.Sequential(
-            Bottleneck(512, 256, 1024, stride=2),
-            Bottleneck(1024, 256, 1024),
-            Bottleneck(1024, 256, 1024),
-            Bottleneck(1024, 256, 1024),
-            Bottleneck(1024, 256, 1024),
-            Bottleneck(1024, 256, 1024),
-        )
-        self.sequ4 = nn.Sequential(
-            Bottleneck(1024, 512, 2048, stride=2),
-            Bottleneck(2048, 512, 2048),
-            Bottleneck(2048, 512, 2048),
-        )
-        self.avgpool = nn.AdaptiveAvgPool2d(output_size=(1, 1))
-        self.flatten = nn.Flatten()
-        self.lin1 = nn.Linear(2048, 1)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.pool_like1(x)
-        x = self.relu(x)
-        x = self.sequ1(x)
-        x = self.sequ2(x)
-        x = self.sequ3(x)
-        x = self.sequ4(x)
-        x = self.avgpool(x)
-        x = self.flatten(x)
-        x = self.lin1(x)
-        return x
-
-
+# ----------------------------- Generator -------------------------------
 class FracConv(nn.Module):
+    """ This is the basic building block of the generator network"""
     def __init__(self, in_planes, out_planes, kernel_size, stride=1, padding=1):
         super(FracConv, self).__init__()
         # bias is usally False in resnet
@@ -758,11 +809,11 @@ class FracConv(nn.Module):
         out = self.batchNormLike(out)
         out = self.relu(out)
         return out
-
     pass
 
 
 class MyConv2D(nn.Module):
+    """ This is another basic building block of the generator network"""
     def __init__(self, in_planes, out_planes, kernel_size, stride=1, padding=1):
         super(MyConv2D, self).__init__()
         # bias is usally False in resnet
@@ -784,6 +835,8 @@ class MyConv2D(nn.Module):
 
 
 class GenNet1_0(nn.Module):
+    """ the definition of the generator network. it takes a sample as input and
+    a random vector of size RANDOM_VECT_SIZE"""
     def __init__(self):
         super(GenNet1_0, self).__init__()
         self.flatten = nn.Flatten()
@@ -805,31 +858,26 @@ class GenNet1_0(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x, rand_vect):
-        # deconstructing simulated data
+        # ---> deconstructing simulated data
         x1 = self.conv1(x)
         x2 = self.conv2(x1)
         x3 = self.conv3(x2)
         x4 = self.conv4(x3)
         x5 = self.conv5(x4)
 
-        # generating random vector
+        # ---> generating random vector and projecting it
         if len(x.size()) == 4:
             batch = int(x.size()[0])
-            # out = torch.normal(1, 0, size=[batch, RANDOM_VECT_SIZE], device=device)
-            # out = torch.tensor(normal(size=[batch, RANDOM_VECT_SIZE]).astype('float32'), device=device)
             out = rand_vect
             out = self.project(out)
             out = out.view(batch, -1, 4, 4)
         else:
-            # out = torch.normal(1, 0, size=[RANDOM_VECT_SIZE], device=device)
-            # out = torch.tensor(normal(size=[RANDOM_VECT_SIZE]).astype('float32'), device=device)
             out = rand_vect
             out = self.project(out)
             out = out.view(-1, 4, 4)
-        out = torch.cat([x5, out], dim=-3)
-        # generating new data
-        out = torch.cat([x4, self.fracConv1(out)], dim=-3)
-        out = torch.cat([x3, self.fracConv2(out)], dim=-3)
+        out = torch.cat([x5, out], dim=-3)  # concatenate with deconstructed data
+        out = torch.cat([x4, self.fracConv1(out)], dim=-3)  # apply fracConv and concatenate
+        out = torch.cat([x3, self.fracConv2(out)], dim=-3)  # rinse and repeat...
         out = torch.cat([x2, self.fracConv3(out)], dim=-3)
         out = torch.cat([x1, self.fracConv4(out)], dim=-3)
         out = self.fracConvLast(out)
@@ -837,6 +885,7 @@ class GenNet1_0(nn.Module):
 
 
 class GenNet2_0(nn.Module):
+    """ a second declaration of the generator"""
     def __init__(self):
         super(GenNet2_0, self).__init__()
         self.flatten = nn.Flatten()
@@ -889,7 +938,7 @@ class GenNet2_0(nn.Module):
         return out
 
 
-# custom loss function
+# ---> custom loss function for the generator
 def FOTloss(generated_sample, label, disc_model, loss_fn):  # my test loss function
     pred = disc_model(generated_sample)
     loss = loss_fn(pred, label)
@@ -898,6 +947,7 @@ def FOTloss(generated_sample, label, disc_model, loss_fn):  # my test loss funct
 
 # ======================== MAIN ROUTINES ========================
 def analise_network(model_name, datatype='valid'):
+    """ same function as in LazyEcMesure. to be used on discriminator models"""
     dataloader = sim_dataloaders[datatype]
     infos = sim_datasets[datatype].info
     # lookAtData(dataloader, dataloader.info, 5, 5)
@@ -997,6 +1047,7 @@ def analise_network(model_name, datatype='valid'):
 
 
 def test_on_exp(model_name):
+    """ same function as in LazyEcMesure. to be used on discriminator models"""
     dataloader = DataLoader(exp_dataset, batch_size=1, shuffle=False)
     infos = exp_dataset.info
     # lookAtData(dataloader, dataloader.info, 5, 5)
@@ -1061,8 +1112,10 @@ def test_on_exp(model_name):
 
 
 def test_GAN():
-    # TODO delete epochs config
-    # TODO randomise weights
+    """ This function is verry similar to the 'train()' function in the
+    'LazyEcMesure.py' file as it trains a neural network to find the Ec
+    Values. I use this function to verify if my generated data allows
+    me to converge on the experimental data"""
     # TODO implement parent run everywhere
 
     global ID, RUN_NAME, gan_model
@@ -1115,7 +1168,12 @@ def test_GAN():
 
 
 def train_GAN():
+    """ Call this function in your main to train a network. it will run
+    the training sequence based on the parameters you have set inside
+    this function"""
     global ID, RUN_NAME, gan_model
+    # =========================== CONFIGURATIONS =================================
+    # NOTE: some configs are in the GLOBAL section at the top of the code
     configs = {
         "disc_architecture": "ResLike2_0",
         "disc_loss_fn": "mean squared error loss",
@@ -1123,7 +1181,7 @@ def train_GAN():
         "gan_architecture": "GenNet1_0",
         "gan_loss_fn": "FOTloss",
         "gan_optimiser": "Adam",
-        "epochs": 1000,
+        "epochs": 1000,                # here, set the max #epoch you want to train for
         "gan_lr": 0.0002,
         "gan_moment": 0.5,
         "disc_lr": 0.0002,
@@ -1131,26 +1189,29 @@ def train_GAN():
         "batch_size": BATCH_SIZE,
         "reset_rate": RESET_RATE,
         "train_segm": TRAIN_SEGMENTATION,
-        "data_used": "3.0 black_square_minimalist",
+        "data_used": "3.0 black_square_minimalist",  # small description
         "data_size": len(sim_dataloaders['train'].dataset),
         "valid_size": len(sim_dataloaders['valid'].dataset),
         "exp_data_size": len(exp_dataloader.dataset),
-        "info": 'reset evrey 7, BF=16, 10 same',
+        "info": 'reset evrey 7, BF=16, 10 same',     # small description
     }
     tags = ['ResLike2_0', 'GenNet1_0']
     print('Dataset train size = %s' % len(sim_datasets['train']))
 
     # ======================= BUILDING MODEL AND WANDB =======================
-    disc_model = ResLike1_0
-    model_name = "trim-shape"  # gan model name
-    branch_training = True  # always True unless continuing a checkpoint
+    disc_model = ResLike1_0      # give the model class, not an instance
+    # No need to enter full model name, just the 2 words does the tric. ex: 'kind-dawn' or 'eager-smoke'
+    model_name = "trim-shape"    # put the name of the model you want to load, None to start a new model
+    branch_training = True       # always True unless continuing a checkpoint
     if model_name is None:
+        # ---> create a new model
         gan_model = GenNet1_0().to(device)
 
         run = wandb.init(project=PROJECT, entity=ENTITY, id=ID, resume="allow",
                          config=configs, tags=tags, group="debug")  # notes, tags, group are other usfull parameters
         init_epoch = 1
     else:
+        # ---> load a model
         run, gan_model, init_epoch, configs = load_gan_model(model_name, configs, branch_training=branch_training, tags=tags)
 
     # ----------------->>> loss and optimisers
@@ -1169,6 +1230,7 @@ def train_GAN():
 
 # ============================ MAIN ============================
 def main():
+    # --------------->>> creating the dataloaders
     global exp_dataloader, sim_dataloaders, disc_dataloader, gan_dataloader, valid_dataloader
     exp_dataloader = DataLoader(exp_dataset, batch_size=BATCH_SIZE, shuffle=True)
     sim_dataloaders = {key: DataLoader(sim_datasets[key], batch_size=BATCH_SIZE, shuffle=True)
@@ -1180,6 +1242,7 @@ def main():
     valid_dataloader = DataLoader(GenDataset(sim_datasets['valid']),
                                  batch_size=BATCH_SIZE, shuffle=True)
 
+    # --------------->>> functions to uncomment depending on what you want to do
     # test_GAN()
     train_GAN()
     # get_input_stats(img_dataloaders['valid'], title='valid mean')
